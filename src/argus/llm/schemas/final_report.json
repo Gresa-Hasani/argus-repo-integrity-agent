@@ -1,0 +1,748 @@
+{
+  "$defs": {
+    "Anomaly": {
+      "description": "A deterministic pattern that warrants investigation. Never an accusation by itself.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/Category"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "severity_hint": {
+          "$ref": "#/$defs/Severity",
+          "default": "LOW"
+        },
+        "material": {
+          "default": false,
+          "title": "Material",
+          "type": "boolean"
+        },
+        "possible_explanations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Possible Explanations",
+          "type": "array"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle",
+          "default": "OBSERVED"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
+        },
+        "resolved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved By"
+        },
+        "proposed_explanation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposed Explanation"
+        },
+        "proposed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposed By"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "title",
+        "description"
+      ],
+      "title": "Anomaly",
+      "type": "object"
+    },
+    "CandidateDecision": {
+      "description": "Audit record: what the model proposed and what the deterministic policy did with it.",
+      "properties": {
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "step": {
+          "title": "Step",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "claim": {
+          "default": "",
+          "title": "Claim",
+          "type": "string"
+        },
+        "model_reasoning": {
+          "default": "",
+          "title": "Model Reasoning",
+          "type": "string"
+        },
+        "proposed_category": {
+          "title": "Proposed Category",
+          "type": "string"
+        },
+        "proposed_severity": {
+          "title": "Proposed Severity",
+          "type": "string"
+        },
+        "proposed_manual_review": {
+          "title": "Proposed Manual Review",
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "decision": {
+          "title": "Decision",
+          "type": "string"
+        },
+        "finding_type": {
+          "$ref": "#/$defs/FindingType"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "finding_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finding Id"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "step",
+        "title",
+        "proposed_category",
+        "proposed_severity",
+        "proposed_manual_review",
+        "decision",
+        "finding_type",
+        "reason"
+      ],
+      "title": "CandidateDecision",
+      "type": "object"
+    },
+    "Category": {
+      "enum": [
+        "REPOSITORY_ACCESS",
+        "COMMIT_INTEGRITY",
+        "CONTRIBUTION_INTEGRITY",
+        "COAUTHOR_INTEGRITY",
+        "LOC_INFLATION",
+        "COMMIT_INFLATION",
+        "CODE_PROVENANCE",
+        "SIMILARITY",
+        "AI_ASSISTANCE",
+        "BRANCH_WORKFLOW",
+        "CI_CD",
+        "REPOSITORY_HYGIENE",
+        "SECRET_EXPOSURE",
+        "README_MISMATCH",
+        "TIMELINE_ANOMALY",
+        "EVALUATOR_ERROR"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "CompletionStatus": {
+      "enum": [
+        "DONE_CLEAN",
+        "DONE_WITH_FINDINGS",
+        "FLAGGED",
+        "INCOMPLETE_EVALUATION",
+        "EVALUATOR_ERROR"
+      ],
+      "title": "CompletionStatus",
+      "type": "string"
+    },
+    "CoverageStatus": {
+      "properties": {
+        "module": {
+          "title": "Module",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ModuleStatus"
+        },
+        "mandatory": {
+          "default": true,
+          "title": "Mandatory",
+          "type": "boolean"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "status"
+      ],
+      "title": "CoverageStatus",
+      "type": "object"
+    },
+    "DefinitionOfDone": {
+      "properties": {
+        "satisfied": {
+          "title": "Satisfied",
+          "type": "boolean"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Counts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "satisfied"
+      ],
+      "title": "DefinitionOfDone",
+      "type": "object"
+    },
+    "EvaluatorError": {
+      "properties": {
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "kind",
+        "message"
+      ],
+      "title": "EvaluatorError",
+      "type": "object"
+    },
+    "Evidence": {
+      "description": "One deterministic, addressable fact (or derived metric). The only thing findings may cite.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "data": {
+          "title": "Data",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "source",
+        "summary"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Finding": {
+      "description": "An engineering weakness, anomaly or material integrity concern. Ordinary facts are not findings.",
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "finding_type": {
+          "$ref": "#/$defs/FindingType"
+        },
+        "category": {
+          "$ref": "#/$defs/Category"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "finding": {
+          "title": "Finding",
+          "type": "string"
+        },
+        "material": {
+          "default": false,
+          "title": "Material",
+          "type": "boolean"
+        },
+        "requires_manual_review": {
+          "default": false,
+          "title": "Requires Manual Review",
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "deterministic_basis": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Deterministic Basis",
+          "type": "array"
+        },
+        "reasoning": {
+          "default": "",
+          "title": "Reasoning",
+          "type": "string"
+        },
+        "llm_reasoning": {
+          "default": "",
+          "title": "Llm Reasoning",
+          "type": "string"
+        },
+        "llm_reasoning_removed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Llm Reasoning Removed",
+          "type": "array"
+        },
+        "text_origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text Origin"
+        },
+        "possible_explanations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Possible Explanations",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "confidence_level": {
+          "default": "MEDIUM",
+          "title": "Confidence Level",
+          "type": "string"
+        },
+        "origin": {
+          "default": "deterministic",
+          "title": "Origin",
+          "type": "string"
+        },
+        "source_step": {
+          "default": "",
+          "title": "Source Step",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle",
+          "default": "ASSESSED"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome",
+          "default": "REVIEW"
+        },
+        "status": {
+          "$ref": "#/$defs/FindingStatus",
+          "default": "OPEN"
+        }
+      },
+      "required": [
+        "finding_id",
+        "finding_type",
+        "category",
+        "severity",
+        "title",
+        "finding",
+        "confidence"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "FindingStatus": {
+      "enum": [
+        "OPEN",
+        "RESOLVED",
+        "FALSE_POSITIVE",
+        "NOT_APPLICABLE",
+        "UNVERIFIABLE"
+      ],
+      "title": "FindingStatus",
+      "type": "string"
+    },
+    "FindingType": {
+      "description": "FACT -> OBSERVATION -> ENGINEERING WEAKNESS -> ANOMALY -> MATERIAL INTEGRITY CONCERN.\n\nAssigned by the deterministic policy layer, never by the model. NORMAL and OBSERVATION are not\nfindings: NORMAL candidates are discarded, OBSERVATIONs are reported as repository observations.",
+      "enum": [
+        "NORMAL",
+        "OBSERVATION",
+        "ENGINEERING_WEAKNESS",
+        "ANOMALY",
+        "MATERIAL_INTEGRITY_CONCERN"
+      ],
+      "title": "FindingType",
+      "type": "string"
+    },
+    "IntegrityAssessment": {
+      "properties": {
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "summary_origin": {
+          "default": "not_produced",
+          "title": "Summary Origin",
+          "type": "string"
+        },
+        "open_material_concerns": {
+          "default": 0,
+          "title": "Open Material Concerns",
+          "type": "integer"
+        },
+        "anomalies_detected": {
+          "default": 0,
+          "title": "Anomalies Detected",
+          "type": "integer"
+        },
+        "anomalies_resolved": {
+          "default": 0,
+          "title": "Anomalies Resolved",
+          "type": "integer"
+        },
+        "anomalies_escalated": {
+          "default": 0,
+          "title": "Anomalies Escalated",
+          "type": "integer"
+        },
+        "manual_review_required": {
+          "default": false,
+          "title": "Manual Review Required",
+          "type": "boolean"
+        }
+      },
+      "title": "IntegrityAssessment",
+      "type": "object"
+    },
+    "Lifecycle": {
+      "enum": [
+        "OBSERVED",
+        "CORROBORATED",
+        "ASSESSED",
+        "RESOLVED"
+      ],
+      "title": "Lifecycle",
+      "type": "string"
+    },
+    "ModuleStatus": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "NOT_APPLICABLE",
+        "UNVERIFIABLE"
+      ],
+      "title": "ModuleStatus",
+      "type": "string"
+    },
+    "Observation": {
+      "description": "A plain repository fact worth showing to a reviewer. Never counted as a finding.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "source": {
+          "default": "deterministic",
+          "title": "Source",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "topic",
+        "text"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "Outcome": {
+      "enum": [
+        "PASS",
+        "REVIEW",
+        "UNVERIFIABLE",
+        "FAIL"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "INFO",
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "agent": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Agent",
+      "type": "object"
+    },
+    "evaluation_id": {
+      "title": "Evaluation Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "repository": {
+      "title": "Repository",
+      "type": "object"
+    },
+    "model": {
+      "title": "Model",
+      "type": "object"
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageStatus"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "deterministic_metrics": {
+      "title": "Deterministic Metrics",
+      "type": "object"
+    },
+    "llm_analyses": {
+      "title": "Llm Analyses",
+      "type": "object"
+    },
+    "anomalies": {
+      "items": {
+        "$ref": "#/$defs/Anomaly"
+      },
+      "title": "Anomalies",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "candidate_decisions": {
+      "items": {
+        "$ref": "#/$defs/CandidateDecision"
+      },
+      "title": "Candidate Decisions",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "integrity_assessment": {
+      "$ref": "#/$defs/IntegrityAssessment"
+    },
+    "handoffs": {
+      "items": {
+        "type": "object"
+      },
+      "title": "Handoffs",
+      "type": "array"
+    },
+    "manual_review": {
+      "title": "Manual Review",
+      "type": "object"
+    },
+    "unverifiable_items": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unverifiable Items",
+      "type": "array"
+    },
+    "errors": {
+      "items": {
+        "$ref": "#/$defs/EvaluatorError"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "executive_summary": {
+      "title": "Executive Summary",
+      "type": "object"
+    },
+    "completion_status": {
+      "$ref": "#/$defs/CompletionStatus"
+    },
+    "definition_of_done": {
+      "$ref": "#/$defs/DefinitionOfDone"
+    }
+  },
+  "required": [
+    "agent",
+    "evaluation_id",
+    "timestamp",
+    "repository",
+    "model",
+    "coverage",
+    "deterministic_metrics",
+    "llm_analyses",
+    "anomalies",
+    "observations",
+    "findings",
+    "candidate_decisions",
+    "evidence",
+    "integrity_assessment",
+    "handoffs",
+    "manual_review",
+    "unverifiable_items",
+    "errors",
+    "executive_summary",
+    "completion_status",
+    "definition_of_done"
+  ],
+  "title": "FinalEvaluation",
+  "type": "object"
+}

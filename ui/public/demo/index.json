@@ -1,0 +1,11 @@
+[
+  {
+    "evaluation_id": "argus-20261008T140549Z-424fc9ec",
+    "repository": "gegedobruna/data-capstone",
+    "timestamp": "2026-10-08T14:05:49+00:00",
+    "status": "DONE_WITH_FINDINGS",
+    "model": "Qwen3-8B",
+    "kind": "github",
+    "findings": 5
+  }
+]

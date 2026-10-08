@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.env
+argus.toml
+argus-reports/
+.argus-work/
+.idea/
+.vscode/
+.DS_Store

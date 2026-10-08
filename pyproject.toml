@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-repo-integrity-agent"
+version = "0.1.0"
+description = "ARGUS - Repository Forensics & Engineering Integrity Agent (deterministic evidence + local Qwen3 reasoning)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.6", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+ui = ["fastapi>=0.110", "uvicorn>=0.29"]
+
+[project.scripts]
+argus = "argus.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+argus = ["llm/prompts/*.md", "llm/schemas/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: needs a running local LLM runtime (deselected by default)"]
+addopts = "-m 'not live'"

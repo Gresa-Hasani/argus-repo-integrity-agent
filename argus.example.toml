@@ -1,0 +1,23 @@
+# Copy to argus.toml. Precedence: defaults < this file < environment < CLI flags.
+[llm]
+provider = "qwen"
+model = "qwen3:4b"   # or "qwen3:8b"
+fallback_model = ""
+backend = "ollama"
+base_url = "http://localhost:11434"
+temperature = 0.1
+max_tokens = 1536
+num_ctx = 8192
+packet_chars = 9000
+timeout = 900
+think = false
+
+[llm.model_tags]
+# "Qwen3-4B" = "hf.co/ggml-org/Qwen3-4B-GGUF:Q4_K_M"
+
+[evaluation]
+similarity_threshold = 0.70
+require_similarity = false
+# deadline = "2026-10-01T18:00:00+00:00"
+late_window_hours = 2.0
+# compare = ["https://github.com/owner/reference-repo"]
