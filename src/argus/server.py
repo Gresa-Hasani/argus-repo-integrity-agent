@@ -15,23 +15,28 @@ import os
 import re
 import threading
 import time
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
+from urllib.parse import urlencode
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from argus import __version__
 from argus.cli import write_validated
 from argus.collectors.gitutil import GITHUB_URL_RE, parse_source
-from argus.config import load_config
+from argus.collectors.github import _get as github_get
+from argus.cohort import cross_validate, overlap_flags
+from argus.config import CLOUD_DEFAULTS, load_config
 from argus.llm.interface import LLMError, create_provider
 from argus.models import FinalEvaluation
 from argus.pipeline import Evaluation
+from argus.statistics import cohort_statistics, report_statistics
 
 log = logging.getLogger("argus.server")
 
@@ -45,7 +50,8 @@ PUBLIC_BUSY = "ARGUS is currently evaluating another repository. Only one evalua
 PUBLIC_FAILURE = "The evaluation could not be completed because of an internal error. No partial result was produced."
 
 _jobs: dict[str, dict[str, Any]] = {}
-_lock = threading.Lock()
+_batches: dict[str, dict[str, Any]] = {}
+_lock = threading.RLock()
 _llm_state: dict[str, Any] = {"ready": None, "checked": 0.0}
 
 
@@ -136,6 +142,17 @@ def _entry(evaluation_id: str) -> dict[str, Any]:
     return entry
 
 
+def evaluation_config(provider: str = "configured"):
+    if provider == "configured":
+        return load_config()
+    overrides = {"llm_provider": provider, **CLOUD_DEFAULTS[provider]}
+    prefix = "ARGUS_OPENAI" if provider == "openai" else "ARGUS_ANTHROPIC"
+    for suffix, attr in (("MODEL", "llm_model"), ("BASE_URL", "llm_base_url")):
+        if os.environ.get(prefix + "_" + suffix):
+            overrides[attr] = os.environ[prefix + "_" + suffix]
+    return load_config(overrides=overrides)
+
+
 # ------------------------------------------------------------------ readiness
 def llm_ready(max_age: float = 30.0) -> bool:
     """Is the configured model present in the local runtime? Lists models only; never downloads one."""
@@ -155,7 +172,9 @@ def llm_ready(max_age: float = 30.0) -> bool:
 
 
 def active_jobs() -> int:
-    return sum(1 for job in _jobs.values() if job["state"] == "running")
+    with _lock:
+        return sum(job["state"] in {"running", "queued"} for job in _jobs.values()) + sum(
+            batch["state"] in {"running", "comparing"} for batch in _batches.values())
 
 
 # ------------------------------------------------------------------ job execution
@@ -173,7 +192,10 @@ def _run(job_id: str, url: str, deterministic_only: bool) -> None:
             job["log"].append(text)
 
     try:
-        cfg = load_config(overrides={"llm_enabled": False if deterministic_only else None})
+        cfg = evaluation_config(job.get("provider", "configured"))
+        if deterministic_only:
+            cfg.llm_enabled = False
+        cfg.work_dir = job.get("work_dir") or cfg.work_dir
         evaluation = Evaluation(url, cfg, None, progress)  # the temporary clone is removed in Evaluation.run()'s finally
         with _lock:
             job["model"] = cfg.llm_model if cfg.llm_enabled else "disabled (deterministic only)"
@@ -183,7 +205,9 @@ def _run(job_id: str, url: str, deterministic_only: bool) -> None:
             job["log"].append("Writing and validating reports")
         write_validated(result, Path(cfg.out_dir))
         with _lock:
-            job.update(state="done", stage_index=5, evaluation_id=result.evaluation_id, finished=time.time())
+            job.update(state="done", stage_index=5, evaluation_id=result.evaluation_id, finished=time.time(),
+                       completion_status=result.completion_status.value,
+                       acquired=bool(result.repository.get("acquisition", {}).get("success")))
             job["log"].append(f"Evaluation status: {result.completion_status.value}")
     except Exception:
         # Details stay in the server log. The browser gets a fixed message: no traceback, path or command.
@@ -196,14 +220,110 @@ def _job_view(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "job_id": job["job_id"], "state": job["state"], "repository": job["repository"], "model": job.get("model"),
         "stages": STAGES, "stage_index": job["stage_index"], "log": job["log"][-40:], "error": job.get("error"),
-        "evaluation_id": job.get("evaluation_id"), "elapsed_s": round((job.get("finished") or time.time()) - job["started"], 1),
+        "evaluation_id": job.get("evaluation_id"), "elapsed_s": 0 if job["state"] == "queued" else round((job.get("finished") or time.time()) - job["started"], 1),
         "deterministic_only": job["deterministic_only"],
+        "completion_status": job.get("completion_status"),
     }
+
+
+def _public_source(raw: str):
+    raw = raw.strip()
+    if len(raw) > 200 or not GITHUB_URL_RE.match(raw):
+        raise HTTPException(status_code=422, detail=PUBLIC_INVALID_URL)
+    try:
+        return parse_source(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=PUBLIC_INVALID_URL) from None
+
+
+def _batch_view(batch: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        items = [_job_view(_jobs[j]) for j in batch["job_ids"]]
+        flags = overlap_flags(batch.get("cross_validation", []))
+        for item in items:
+            item["similarity_flagged"] = item["repository"] in flags
+        return {
+            "batch_id": batch["batch_id"], "state": batch["state"], "model": batch["model"], "provider": batch.get("provider", "configured"),
+            "total": len(items), "completed": sum(j["state"] in {"done", "failed"} for j in items),
+            "failed": sum(j["state"] == "failed" for j in items), "items": items,
+            "cross_validation": batch.get("cross_validation", []),
+            "cross_validation_error": batch.get("cross_validation_error"),
+            "persistence_error": batch.get("persistence_error"),
+            "elapsed_s": round((batch.get("finished") or time.time()) - batch["started"], 1),
+        }
+
+
+def _run_batch(batch_id: str) -> None:
+    batch = _batches[batch_id]
+    try:
+        # Retain each safe clone only until pairwise comparison has finished.
+        with tempfile.TemporaryDirectory(prefix="argus-batch-") as root:
+            repositories = []
+            for job_id in batch["job_ids"]:
+                job = _jobs[job_id]
+                with _lock:
+                    job.update(state="running", started=time.time(), work_dir=str(Path(root) / job_id))
+                try:
+                    _run(job_id, job["url"], job["deterministic_only"])
+                except Exception:
+                    log.exception("batch job %s failed", job_id)
+                    with _lock:
+                        job.update(state="failed", error=PUBLIC_FAILURE, finished=time.time())
+                path = Path(job["work_dir"]) / "target"
+                repositories.append({"slug": job["repository"], "local_path": str(path),
+                                     "acquisition_status": "available" if job.get("acquired") and path.is_dir() else "unavailable"})
+            with _lock:
+                batch["state"] = "comparing"
+            try:
+                comparisons = cross_validate(repositories, threshold=load_config().similarity_threshold) if len(repositories) > 1 else []
+                with _lock:
+                    batch["cross_validation"] = comparisons
+            except Exception:
+                log.exception("batch pairwise comparison failed")
+                with _lock:
+                    batch["cross_validation_error"] = "Pairwise checks could not be completed. Individual reports remain available."
+    except Exception:
+        log.exception("batch execution failed")
+        with _lock:
+            batch["cross_validation_error"] = "The batch could not finish. Completed reports remain available."
+            for job_id in batch["job_ids"]:
+                job = _jobs[job_id]
+                if job["state"] in {"queued", "running"}:
+                    job.update(state="failed", error=PUBLIC_FAILURE, finished=time.time())
+    finally:
+        with _lock:
+            failed = any(_jobs[j]["state"] == "failed" for j in batch["job_ids"])
+            finished = time.time()
+            final_state = "done_with_errors" if failed or batch.get("cross_validation_error") else "done"
+            for job_id in batch["job_ids"]:
+                _jobs[job_id].pop("work_dir", None)
+            snapshot = _batch_view(batch)
+            snapshot.update(state=final_state, elapsed_s=round(finished - batch["started"], 1))
+        try:
+            directory = Path(batch["reports_dir"])
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / f"batch-{batch_id}.json"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        except Exception:
+            log.exception("could not persist batch summary %s", batch_id)
+            with _lock:
+                batch["persistence_error"] = "The batch summary could not be saved. It remains available until the backend restarts."
+                final_state = "done_with_errors"
+        with _lock:
+            batch.update(state=final_state, finished=finished)
 
 
 class EvaluateRequest(BaseModel):
     url: str
     deterministic_only: bool = False  # skip the model: fast, but can be at best INCOMPLETE_EVALUATION
+
+
+class BatchRequest(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=50)
+    deterministic_only: bool = False
+    provider: Literal["configured", "openai", "anthropic"] = "configured"
 
 
 # ------------------------------------------------------------------ application
@@ -237,19 +357,14 @@ def create_app(env: Optional[Mapping[str, str]] = None) -> FastAPI:
         """Can ARGUS accept an evaluation right now, and is AI reasoning available?"""
         busy = active_jobs() >= MAX_ACTIVE_JOBS
         ai = llm_ready()
-        return {"status": "busy" if busy else "ready", "accepting_evaluations": not busy, "ai_reasoning_available": ai}
+        return {"status": "busy" if busy else "ready", "accepting_evaluations": not busy, "ai_reasoning_available": ai,
+                "model": scrub_text(load_config().llm_model)}
 
     @application.post("/api/evaluate")
     def start(request: EvaluateRequest) -> Any:
-        raw = request.url.strip()
         # Public GitHub repositories only, checked against the strict pattern before anything else looks at
         # the value. Local paths, other hosts, credentials, queries and non-https schemes all get one answer.
-        if len(raw) > 200 or not GITHUB_URL_RE.match(raw):
-            raise HTTPException(status_code=422, detail=PUBLIC_INVALID_URL)
-        try:
-            source = parse_source(raw)
-        except ValueError:
-            raise HTTPException(status_code=422, detail=PUBLIC_INVALID_URL) from None
+        source = _public_source(request.url)
         with _lock:
             if active_jobs() >= MAX_ACTIVE_JOBS:
                 return JSONResponse(status_code=429, content={"detail": PUBLIC_BUSY}, headers={"Retry-After": "60"})
@@ -260,6 +375,114 @@ def create_app(env: Optional[Mapping[str, str]] = None) -> FastAPI:
             }
         threading.Thread(target=_run, args=(job_id, source.url, request.deterministic_only), daemon=True).start()
         return _job_view(_jobs[job_id])
+
+    @application.get("/api/repositories/search")
+    def search_repositories(q: str = Query(min_length=2, max_length=120)) -> list[dict[str, Any]]:
+        if len(q.strip()) < 2:
+            raise HTTPException(status_code=422, detail="Enter at least two search characters.")
+        try:
+            data = github_get("/search/repositories?" + urlencode({"q": q.strip() + " is:public archived:false", "per_page": 8}), load_config().github_token)
+        except Exception:
+            raise HTTPException(status_code=503, detail="GitHub search is unavailable or rate-limited. Paste links or use the public test repositories.") from None
+        rows = []
+        for item in data.get("items", []):
+            if item.get("private") is not False or item.get("archived") is True:
+                continue
+            try:
+                source = _public_source(item.get("html_url", ""))
+            except HTTPException:
+                continue
+            rows.append({"repository": source.slug, "url": source.url, "description": scrub_text(item.get("description") or "")[:250],
+                         "language": item.get("language"), "stars": item.get("stargazers_count", 0)})
+        return rows
+
+    @application.get("/api/batches")
+    def list_batches() -> list[dict[str, Any]]:
+        rows = {}
+        directory = Path(load_config().out_dir)
+        for path in sorted(directory.glob("batch-*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not re.fullmatch(r"batch-[0-9a-f]{12}\.json", path.name):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if value.get("batch_id") != path.stem.removeprefix("batch-") or value.get("state") not in {"done", "done_with_errors"}:
+                    continue
+                rows[value["batch_id"]] = {k: value.get(k) for k in ("batch_id", "state", "model", "total", "completed")}
+            except (OSError, ValueError, AttributeError):
+                continue
+        with _lock:
+            active = [_batch_view(b) for b in _batches.values()]
+        for value in reversed(active):
+            rows[value["batch_id"]] = {k: value.get(k) for k in ("batch_id", "state", "model", "total", "completed")}
+        return list(rows.values())
+
+    @application.post("/api/batches")
+    def start_batch(request: BatchRequest) -> Any:
+        sources = []
+        seen = set()
+        for raw in request.urls:
+            source = _public_source(raw)
+            if source.url.casefold() not in seen:
+                seen.add(source.url.casefold())
+                sources.append(source)
+        with _lock:
+            if active_jobs() >= MAX_ACTIVE_JOBS:
+                return JSONResponse(status_code=429, content={"detail": PUBLIC_BUSY}, headers={"Retry-After": "60"})
+            batch_id = uuid.uuid4().hex[:12]
+            cfg = evaluation_config(request.provider)
+            if not request.deterministic_only and request.provider != "configured" and not cfg.llm_api_key:
+                raise HTTPException(status_code=422, detail=f"Set the {request.provider} API key in the backend environment first.")
+            job_ids = []
+            for source in sources:
+                job_id = uuid.uuid4().hex[:12]
+                job_ids.append(job_id)
+                _jobs[job_id] = {"job_id": job_id, "state": "queued", "repository": source.slug, "url": source.url,
+                                 "stage_index": 0, "log": [], "started": time.time(), "model": cfg.llm_model if not request.deterministic_only else "disabled (deterministic only)",
+                                 "deterministic_only": request.deterministic_only, "provider": request.provider}
+            _batches[batch_id] = {"batch_id": batch_id, "state": "running", "job_ids": job_ids, "started": time.time(),
+                                  "reports_dir": str(Path(cfg.out_dir).resolve()), "provider": request.provider,
+                                  "model": cfg.llm_model if not request.deterministic_only else "disabled (deterministic only)"}
+        threading.Thread(target=_run_batch, args=(batch_id,), daemon=True).start()
+        return _batch_view(_batches[batch_id])
+
+    @application.get("/api/batches/{batch_id}")
+    def batch_status(batch_id: str) -> dict[str, Any]:
+        batch = _batches.get(batch_id)
+        if not batch:
+            if re.fullmatch(r"[0-9a-f]{12}", batch_id):
+                path = Path(load_config().out_dir) / f"batch-{batch_id}.json"
+                try:
+                    saved = json.loads(path.read_text(encoding="utf-8"))
+                    if saved.get("batch_id") == batch_id and saved.get("state") in {"done", "done_with_errors"}:
+                        return saved
+                except (OSError, ValueError, AttributeError):
+                    pass
+            raise HTTPException(status_code=404, detail="Unknown batch. Saved reports remain available after a backend restart.")
+        return _batch_view(batch)
+
+    @application.get("/api/providers")
+    def providers() -> list[dict[str, Any]]:
+        rows = []
+        for choice in ("configured", "openai", "anthropic"):
+            cfg = evaluation_config(choice)
+            rows.append({"id": choice, "provider": cfg.llm_provider, "model": scrub_text(cfg.llm_model),
+                         "configured": bool(cfg.llm_api_key) if cfg.llm_provider in {"openai", "anthropic", "claude"} else True})
+        return rows
+
+    @application.get("/api/batches/{batch_id}/statistics")
+    def batch_statistics(batch_id: str) -> dict[str, Any]:
+        batch = batch_status(batch_id)
+        reports = _saved()
+        rows = []
+        for item in batch["items"]:
+            entry = reports.get(item.get("evaluation_id"))
+            row = {"repository": item["repository"], "state": item["state"], "available": bool(entry)}
+            if entry:
+                row.update(report_statistics(entry["result"].model_dump(mode="json")))
+                row["similarity_flagged"] = item.get("similarity_flagged", False)
+                row["flagged"] = row["flagged"] or row["similarity_flagged"]
+            rows.append(row)
+        return {"batch_id": batch_id, **cohort_statistics(rows)}
 
     @application.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> dict[str, Any]:

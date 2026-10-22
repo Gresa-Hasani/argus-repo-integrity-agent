@@ -54,7 +54,9 @@ class Config:
 
     @property
     def llm_api_key(self) -> Optional[str]:
-        return os.environ.get("ARGUS_LLM_API_KEY") or None
+        provider = self.llm_provider.lower()
+        specific = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY" if provider in {"anthropic", "claude"} else ""
+        return os.environ.get(specific) or os.environ.get("ARGUS_LLM_API_KEY") or None
 
     def public_dict(self) -> dict[str, Any]:
         """Config as recorded in reports. Contains no credentials by construction."""
@@ -123,6 +125,21 @@ _FILE_EVAL = {
 }
 
 
+CLOUD_DEFAULTS = {
+    "openai": {"llm_model": "gpt-4.1-mini", "llm_base_url": "https://api.openai.com/v1", "llm_backend": "openai"},
+    "anthropic": {"llm_model": "claude-sonnet-4-6", "llm_base_url": "https://api.anthropic.com/v1", "llm_backend": "anthropic"},
+}
+
+
+def _provider_defaults(cfg: Config, provider: str) -> None:
+    provider = "anthropic" if provider.lower() == "claude" else provider.lower()
+    current = "anthropic" if cfg.llm_provider.lower() == "claude" else cfg.llm_provider.lower()
+    if provider != current:
+        for key, value in CLOUD_DEFAULTS.get(provider, {}).items():
+            setattr(cfg, key, value)
+        cfg.llm_provider = provider
+
+
 def load_config(
     config_file: Optional[str] = None,
     env: Optional[Mapping[str, str]] = None,
@@ -137,6 +154,7 @@ def load_config(
     if path.is_file():
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         llm = data.get("llm", {})
+        _provider_defaults(cfg, llm.get("provider", cfg.llm_provider))
         for key, attr in _FILE_LLM.items():
             if key in llm:
                 setattr(cfg, attr, llm[key])
@@ -145,6 +163,7 @@ def load_config(
             if key in _FILE_EVAL:
                 setattr(cfg, key, value)
 
+    _provider_defaults(cfg, env.get("ARGUS_LLM_PROVIDER", cfg.llm_provider))
     for name, (attr, cast) in _ENV.items():
         if env.get(name):
             setattr(cfg, attr, cast(env[name]))
@@ -153,6 +172,7 @@ def load_config(
     if env.get("ARGUS_LLM_FALLBACK_MODEL_TAG"):
         cfg.llm_model_tags[cfg.llm_fallback_model] = env["ARGUS_LLM_FALLBACK_MODEL_TAG"]
 
+    _provider_defaults(cfg, (overrides or {}).get("llm_provider") or cfg.llm_provider)
     for key, value in (overrides or {}).items():
         if value is not None:
             setattr(cfg, key, value)

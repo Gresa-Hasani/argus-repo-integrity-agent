@@ -13,3 +13,5 @@ argus-reports/
 .idea/
 .vscode/
 .DS_Store
+test-cohort/repos/
+test-cohort/output/

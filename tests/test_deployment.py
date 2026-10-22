@@ -28,9 +28,11 @@ def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # reports and demo data resolve inside the test directory
     monkeypatch.delenv("ARGUS_ALLOWED_ORIGINS", raising=False)
     server._jobs.clear()
+    server._batches.clear()
     server._llm_state.update(ready=None, checked=0.0)
     yield TestClient(server.create_app({}))
     server._jobs.clear()
+    server._batches.clear()
 
 
 def fake_github(monkeypatch, repo_path: Path) -> None:
@@ -151,11 +153,12 @@ def test_health_and_ready_expose_only_minimal_operational_state(api, monkeypatch
     for path in ("/health", "/api/health"):
         assert api.get(path).json() == {"status": "ok", "service": "argus"}
     monkeypatch.setattr(server, "llm_ready", lambda max_age=30.0: False)
-    assert api.get("/ready").json() == {"status": "ready", "accepting_evaluations": True, "ai_reasoning_available": False}
+    assert api.get("/ready").json() == {"status": "ready", "accepting_evaluations": True, "ai_reasoning_available": False, "model": "qwen3:4b"}
     assert api.get("/docs").status_code == 404 and api.get("/openapi.json").status_code == 404  # no schema browser on a public host
 
 
-def test_readiness_check_lists_models_and_never_pulls(monkeypatch):
+def test_readiness_check_lists_models_and_never_pulls(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     class Backend:
         name = "stub"
         calls: list[str] = []
@@ -268,7 +271,8 @@ def test_frontend_reads_api_url_from_environment_only():
 
 
 # 11 --- model configuration -------------------------------------------------------------------------
-def test_model_is_configured_by_environment_with_a_4b_default():
+def test_model_is_configured_by_environment_with_a_4b_default(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # operator's local argus.toml must not change default tests
     assert load_config(env={}).llm_model == "qwen3:4b" and load_config(env={}).llm_fallback_model == ""
     assert load_config(env={"ARGUS_MODEL": "qwen3:8b"}).llm_model == "qwen3:8b"
     assert load_config(env={"ARGUS_LLM_MODEL": "Qwen3-8B", "ARGUS_MODEL": "qwen3:4b"}).llm_model == "qwen3:4b"  # ARGUS_MODEL wins

@@ -277,6 +277,9 @@ def test_config_precedence_and_no_credentials_in_reports(tmp_path, monkeypatch):
     assert (cfg.llm_model, cfg.llm_temperature, cfg.llm_base_url, cfg.similarity_threshold) == ("Qwen3-8B", 0.2, "http://localhost:8000", 0.8)
     assert cfg.llm_model_tags == {"Qwen3-4B": "custom:4b"} and cfg.github_token == "ghp_notarealtoken"
     assert "ghp_notarealtoken" not in json.dumps(cfg.public_dict())
+    defaults_dir = tmp_path / "defaults"
+    defaults_dir.mkdir()
+    monkeypatch.chdir(defaults_dir)
     defaults = load_config(env={})
     assert (defaults.llm_model, defaults.llm_fallback_model, defaults.similarity_threshold) == ("qwen3:4b", "", 0.70)
 
@@ -347,3 +350,22 @@ def test_github_url_is_normalized_and_original_is_preserved():
     for raw in ("https://github.com/gegedobruna/data-capstone", "https://github.com/gegedobruna/data-capstone.git", "https://github.com/gegedobruna/data-capstone/"):
         s = parse_source(raw)
         assert (s.raw, s.url, s.owner, s.name, s.slug) == (raw, "https://github.com/gegedobruna/data-capstone", "gegedobruna", "data-capstone", "gegedobruna/data-capstone")
+
+
+def test_invalid_historical_timezone_uses_git_epoch_without_losing_commit(tmp_path):
+    import subprocess
+    from datetime import datetime, timezone
+    repo = RepoBuilder(tmp_path / 'bad-zone')
+    repo.commit('Add historic source', {'historical.py': 'value = 42\n'})
+    raw = repo._git('cat-file', 'commit', 'HEAD')
+    epoch = int(next(line for line in raw.splitlines() if line.startswith('author ')).split()[-2])
+    raw = raw.replace('+0000', '+51800')
+    written = subprocess.run(['git', '-C', str(repo.path), 'hash-object', '--literally', '-t', 'commit', '-w', '--stdin'],
+                             input=raw, text=True, capture_output=True, check=True).stdout.strip()
+    repo._git('update-ref', 'refs/heads/main', written)
+    commits = parse_history(repo.path, 'main')
+    assert len(commits) == 1 and commits[0].sha == written
+    assert commits[0].author_time == commits[0].commit_time == datetime.fromtimestamp(epoch, timezone.utc)
+    assert len(commits[0].timestamp_notes) == 2
+    assert 'invalid ISO timezone' in commits[0].brief()['timestamp_notes'][0]
+    assert commits[0].additions == 1 and commits[0].files[0].path == 'historical.py'

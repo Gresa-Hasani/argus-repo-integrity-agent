@@ -50,7 +50,7 @@ def register_provider(name: str, factory: Callable[[Any], LLMProvider]) -> None:
 
 
 def create_provider(cfg) -> LLMProvider:
-    from argus.llm.providers import qwen  # noqa: F401 - registers itself
+    from argus.llm.providers import cloud, ollama, qwen  # noqa: F401 - register providers
 
     try:
         factory = _REGISTRY[cfg.llm_provider.lower()]

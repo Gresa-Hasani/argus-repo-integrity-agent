@@ -1,0 +1,10 @@
+{
+  "purpose": "Public repositories selected for evaluator integration testing; not student submissions",
+  "retrieved_on": "2026-10-14",
+  "repositories": [
+    {"slug": "shah314/graphcoloring", "url": "https://github.com/shah314/graphcoloring", "problem": "graph_coloring"},
+    {"slug": "Docheinstein/itc2007-cct", "url": "https://github.com/Docheinstein/itc2007-cct", "problem": "curriculum_timetabling"},
+    {"slug": "githubjonas/social-golfer", "url": "https://github.com/githubjonas/social-golfer", "problem": "social_golfer_variant"},
+    {"slug": "ADDALemos/MPPTimetables", "url": "https://github.com/ADDALemos/MPPTimetables", "problem": "timetabling"}
+  ]
+}

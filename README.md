@@ -1,376 +1,456 @@
-# ARGUS — Repository Forensics & Engineering Integrity Agent
+# ARGUS — Repository Integrity & Cohort Analysis
 
-ARGUS evaluates whether a Git/GitHub repository shows a credible, traceable and internally consistent
-engineering process. It is one specialised agent in a larger repository-evaluation pack: it surfaces
-evidence about history, contributions, provenance and hygiene, and leaves requirement fulfilment, QA and
-ML-model judgement to the other agents.
+ARGUS evaluates the engineering evidence in Git repositories: history, contributions, source provenance,
+repository hygiene, README claims, and CI configuration. Its web interface evaluates **multiple public
+GitHub repositories**, compares every pair, and graphs each repository's measured results.
 
-**Measure first, reason second.** Every number in an ARGUS report is computed by deterministic tooling
-(Git, the GitHub API, scc, static parsers). A local open-source Qwen3 model served by Ollama — `qwen3:4b` by
-default (it fits free hosting), `qwen3:8b` when you have the memory — only interprets structured evidence
-packets, and every finding it proposes must cite evidence that exists in the evidence store.
+**Measure first, reason second.** Git and static collectors produce the evidence. Ollama, OpenAI, or
+Claude interprets bounded evidence packets. Deterministic policy validates citations, decides whether a
+finding is justified, and calculates the final status. A model cannot invent measurements or clear a
+material concern by explanation alone.
 
-## Requirements
+ARGUS is an integrity evaluator, not an automatic assignment grader. Requirements, extra credit, solver
+correctness, and academic scores require their own verified rubric and benchmark evidence.
 
-- Python 3.12+
-- `git` on `PATH`
-- A local inference runtime serving Qwen3. Tested with [Ollama](https://ollama.com):
-  ```bash
-  ollama pull qwen3:8b
-  ```
-  ```bash
-  ollama pull qwen3:4b
-  ```
-- Optional: [Boyter scc](https://github.com/boyter/scc) on `PATH` (or `ARGUS_SCC_PATH`). Without it ARGUS uses a
-  built-in line counter and says so in the report (no complexity metric).
+## Contents
 
-## Install
+- [Quick start](#quick-start)
+- [Choose an AI provider](#choose-an-ai-provider)
+- [Evaluate repositories in the UI](#evaluate-repositories-in-the-ui)
+- [Statistics and copied-code detection](#statistics-and-copied-code-detection)
+- [Complete an evaluation](#complete-an-evaluation)
+- [CLI](#cli)
+- [Configuration](#configuration)
+- [HTTP API](#http-api)
+- [Reproducible tests](#reproducible-tests)
+- [Architecture and evidence policy](#architecture-and-evidence-policy)
+- [Deployment and data handling](#deployment-and-data-handling)
+- [Limits and troubleshooting](#limits-and-troubleshooting)
 
-```bash
-pip install -e ".[dev]"
-```
+## Quick start
 
-## Usage
+Requirements: **Python 3.12+**, **Git**, and **Node.js 20.9+** with npm for the UI. Use a supported Node LTS
+release. A full evaluation also needs an available AI provider; Ollama is optional when using a hosted API.
 
-```bash
-argus evaluate https://github.com/owner/repository
-```
-
-```bash
-argus evaluate https://github.com/owner/repository --model Qwen3-4B
-```
-
-```bash
-argus evaluate ./some/local/clone --compare https://github.com/owner/reference --deadline 2026-10-01T18:00:00+02:00
-```
-
-Useful flags: `--compare REPO` (repeatable; reference repositories for similarity), `--require-similarity`,
-`--similarity-threshold`, `--deadline`, `--backend ollama|openai`, `--base-url`, `--config argus.toml`,
-`--out DIR`, `--no-github-api`, `--no-llm`, `--keep-clone`.
-
-The CLI prints the repository, model, progress, modules completed, findings, manual-review requirements,
-final status and report location. Reports go to `argus-reports/` as `<repo>.<evaluation_id>.md` and `.json`.
-
-| Exit code | Meaning |
-|---|---|
-| 0 | `DONE_CLEAN` or `DONE_WITH_FINDINGS` |
-| 2 | usage or configuration error |
-| 3 | `FLAGGED` |
-| 4 | `INCOMPLETE_EVALUATION` |
-| 5 | `EVALUATOR_ERROR` |
-
-## Public demo
-
-The frontend in `ui/` deploys to **Vercel (free)** as a fully static page and needs **no backend**.
-
-- It shows a **saved, real ARGUS evaluation**: Qwen3-8B on `https://github.com/gegedobruna/data-capstone`
-  (`DONE_WITH_FINDINGS`, 5 findings, 0 integrity flags, no manual review), including the findings with their
-  deterministic evidence and advisory AI reasoning, the policy decisions, the model-candidate audit table,
-  repository metrics, and the Markdown and JSON reports.
-- The data is the evaluator's own output, bundled as static files in `ui/public/demo/` (email addresses are
-  masked and local paths removed; nothing else is altered).
-- **Nothing is evaluated in the public demo.** The Evaluate form is disabled and says why. The page never
-  imitates a live run.
-
-Deploy:
-
-1. Import the repository in Vercel and set **Root Directory** to `ui`.
-2. Do **not** set `NEXT_PUBLIC_API_URL`. Its absence is what selects demo mode.
-3. Deploy. No environment variables, secrets or other services are needed.
-
-To refresh the bundled result from a newer local evaluation:
-
-```bash
-python -m argus.demo argus-reports/<report>.json
-```
-
-## Local full evaluation
-
-Run by each team member on their own machine: the FastAPI backend, Ollama and the Qwen3 model stay local.
-
-Prerequisites: Python 3.12+, Node.js 20+, Git, and [Ollama](https://ollama.com/download).
+From a POSIX shell:
 
 ```bash
 git clone https://github.com/Gresa-Hasani/argus-repo-integrity-agent.git
-```
-
-```bash
 cd argus-repo-integrity-agent
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev,ui,analytics]'
+npm --prefix ui ci
 ```
+
+On Windows, activate with `.venv\Scripts\Activate.ps1` in PowerShell instead. Set environment variables
+with `$env:NAME = 'value'` instead of `export NAME=value`.
+
+Select a provider using the next section, then start the backend from the repository root:
 
 ```bash
-pip install -e ".[dev,ui]"
+python -m uvicorn argus.server:app --host 127.0.0.1 --port 8000
 ```
+
+In another terminal:
 
 ```bash
-npm --prefix ui install
+npm --prefix ui run dev -- --hostname 127.0.0.1
 ```
 
-Pull one model. `qwen3:4b` (about 2.5 GB download, about 4 GB RAM) is the default; `qwen3:8b` (about 5 GB
-download, about 7 GB RAM) is slower but was used for the saved demo result:
+Open [ARGUS at localhost:3000](http://localhost:3000). The checked-in `ui/.env.development` selects
+`http://localhost:8000` as the development backend. Check connectivity with:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8000/api/ready
+```
+
+`/health` confirms the backend is alive. `/ready` separately reports whether AI reasoning is available
+and whether another batch occupies the evaluation queue. Readiness checks model availability, not the
+accuracy of its future answers.
+
+Optional: install [scc](https://github.com/boyter/scc) for its source and complexity metrics. Without scc,
+ARGUS labels its built-in line counter as a fallback and leaves complexity unavailable.
+
+## Choose an AI provider
+
+The UI offers **Server default**, **OpenAI API**, and **Claude API**. Configure keys in the backend process
+before starting it. Keys never belong in `NEXT_PUBLIC_*` variables, Git, or browser input fields.
+
+### Ollama: local models
+
+Install [Ollama](https://ollama.com/download), start its service, and pull a model:
 
 ```bash
 ollama pull qwen3:4b
 ```
 
-```bash
-ollama pull qwen3:8b
-```
-
-Start the backend from the repository root (terminal 1). It listens on `http://localhost:8000`:
+The portable default is Qwen3 4B. To explicitly select a different Ollama model:
 
 ```bash
-python -m uvicorn argus.server:app --port 8000
+export ARGUS_LLM_PROVIDER=ollama
+export ARGUS_MODEL='your-installed-model-tag'
 ```
 
-To use the 8B model instead, set `ARGUS_MODEL` first (PowerShell: `$env:ARGUS_MODEL = "qwen3:8b"`; bash:
-`export ARGUS_MODEL=qwen3:8b`).
-
-Start the frontend (terminal 2). `ui/.env.development` points it at `http://localhost:8000`:
+The checked-in `argus.gemma.toml` profile selects **Gemma 3 12B Q4_K_M**, imported on the development
+workstation under `argus-gemma3:12b`. This custom tag is **not bundled with ARGUS** and is not guaranteed
+to exist on another machine. Install/import a compatible model first; confirm its exact tag with
+`ollama list`. Model size, context length, available RAM/VRAM, and hardware determine runtime.
 
 ```bash
-npm --prefix ui run dev
+argus evaluate https://github.com/owner/repository --config argus.gemma.toml
 ```
 
-Open http://localhost:3000, paste any public GitHub URL (`https://github.com/<owner>/<repository>`) and click
-**Evaluate Repository**.
+Local configuration is read from `argus.toml`. Copy `argus.example.toml` as a starting point, or copy
+`argus.gemma.toml` when that model is installed. Ollama and the generic Ollama provider also support
+other text models; the Qwen provider retains logical-name mapping and the OpenAI-compatible local
+runtime backend for vLLM, llama.cpp, or LM Studio.
 
-- A **full evaluation** runs every deterministic collector, then the Qwen3 reasoning steps, then the policy
-  layer. On a CPU-only laptop expect roughly 30 minutes with `qwen3:4b` and 45 minutes with `qwen3:8b` for a
-  repository of about 80 commits. Keep the machine awake.
-- **Deterministic evidence only** skips the model and finishes in seconds; because the reasoning checks did
-  not run, the result is reported as `INCOMPLETE_EVALUATION`, never as clean.
-- **Completed evaluations** lists the results in `argus-reports/` plus the bundled demo result.
-- Only one evaluation runs at a time; a second request gets a clear "busy" answer.
+### OpenAI API
 
-The same pipeline is available without the UI: `argus evaluate https://github.com/<owner>/<repository>`.
+```bash
+export OPENAI_API_KEY='your-key'
+export ARGUS_OPENAI_MODEL='gpt-4.1-mini'
+```
 
-### Local API
+Restart the backend and select **OpenAI API** in the batch form. The adapter uses the
+[Responses API](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses),
+JSON mode, schema instructions, and `store=false`; ARGUS validates the returned object itself.
 
-`GET /health` (liveness: `{"status": "ok", "service": "argus"}`), `GET /ready` (accepting evaluations, AI
-reasoning available), `POST /api/evaluate`, `GET /api/jobs/{job_id}`, `GET /api/evaluations`,
-`GET /api/evaluate/{evaluation_id}`, `GET /api/evaluate/{evaluation_id}/report`,
-`GET /api/evaluate/{evaluation_id}/json`.
+For CLI use, or to make OpenAI the **Server default**:
 
-- Only public `https://github.com/<owner>/<repository>` URLs are accepted; everything else gets the same 422.
-- Reports are looked up by evaluation id only; no client-supplied path reaches the filesystem.
-- Responses carry no absolute paths, local service URLs, secret values or full email addresses. Failures
-  return a fixed message; details stay in the server log.
-- CORS allows `http://localhost:3000` plus the exact origins in `ARGUS_ALLOWED_ORIGINS` (no wildcards).
-- Jobs are held in memory: restarting the backend loses a running evaluation. Finished reports stay in
-  `argus-reports/`.
-- `python -m argus.server` binds `HOST`/`PORT` (default `127.0.0.1:8000`).
+```bash
+export ARGUS_LLM_PROVIDER=openai
+export ARGUS_MODEL='gpt-4.1-mini'
+```
 
-The frontend is Next.js 16, TypeScript and Tailwind CSS 4; the backend is FastAPI (`src/argus/server.py`)
-over the Python pipeline. The frontend is presentation only: every value comes from the ARGUS result.
+### Claude API
+
+```bash
+export ANTHROPIC_API_KEY='your-key'
+export ARGUS_ANTHROPIC_MODEL='claude-sonnet-4-6'
+```
+
+Restart the backend and select **Claude API**. The adapter uses the
+[Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create), a schema-defined
+output tool, and forced tool selection. It accepts the returned tool object only after ARGUS validation.
+
+For CLI use, or to make Claude the **Server default**:
+
+```bash
+export ARGUS_LLM_PROVIDER=anthropic
+export ARGUS_MODEL='claude-sonnet-4-6'
+```
+
+`claude` is an alias for `anthropic`. Model access depends on your provider account. Hosted requests
+send the evidence packet to the selected provider and incur its API charges. ARGUS does not silently
+switch providers when a request fails. API transport tests use simulated responses; a live key is
+required to verify real account access, quota, and model behavior.
+
+## Evaluate repositories in the UI
+
+1. Build a list by **pasting URLs**, **importing a `.txt` list**, using **public GitHub search**, or adding
+   the curated public test repositories.
+2. Select an available AI provider. **Leave “Deterministic evidence only” unchecked for a full run.**
+3. Start the batch and follow each repository's queue state, progress, findings, and report.
+4. Review the statistics and every pairwise code/README comparison.
+5. Use **View saved batch results** to reopen a batch without evaluating it again.
+
+Accepts 1–50 repository home-page URLs such as `https://github.com/owner/repository`. Separate them
+with newlines, spaces, commas, or semicolons. Duplicates are removed and the entire list is validated
+before scheduling. The web API accepts public GitHub repositories; the CLI additionally accepts local
+Git repositories. GitHub search excludes private and archived results. If search is unavailable or
+rate-limited, pasted links and curated examples remain usable.
+
+Repositories run sequentially. A failed repository does not abort the remaining queue. Closing the
+browser does not cancel the server job, but stopping or restarting the backend interrupts an active
+queue. Completed individual reports and batch summaries survive restarts; running queues do not.
+
+## Statistics and copied-code detection
+
+Choose a graph metric: findings, meaningful source lines, commits, passed-check percentage, or evaluator
+errors. Each repository has a labeled bar; the distribution shows sample size, mean, median, sample
+standard deviation, missing values, and a histogram. A descriptive normal fit appears only with at least
+three non-identical measurements. It does not establish that the cohort is normally distributed.
+
+The first view **excludes flagged repositories**. When flags exist, a second view includes them, using
+the same axes and bins. Missing reports and unavailable measurements never become zeros. Incomplete
+reports stay labeled; passed-check percentage measures evaluation coverage, not software quality.
+
+### What the overlap flag means
+
+ARGUS compares every acquired pair using **directional token 6-gram containment** over classified
+source/test files. A→B measures the share of A's file shingles also found in B; B→A can differ when a
+derivative adds substantial code. Files with fewer than 20 unique shingles are skipped. Matching source
+may be renamed or reformatted; extensive identifier changes or semantic rewrites can reduce detection.
+This is textual similarity, not semantic equivalence analysis.
+
+Code containment at or above `similarity_threshold` (default **70%**) in either direction flags both
+participants for review and excludes both from the primary statistics. Matched-file evidence is stored
+in the batch summary. **Shared README text or headings alone never create a code-overlap flag.**
+Documentation, configuration, generated/vendored content, datasets, binaries, build output, minified
+files, lockfiles, and CI files are excluded by the source-classification rules.
+
+An overlap flag does not establish intent, licensing violations, or who copied whom. Review declared
+forks, attribution, shared starter templates, libraries, and commit history. The batch flag is distinct
+from the completion status and findings of each individual evaluation. For an individual similarity
+finding, supply references with CLI `--compare`.
+
+### Real modified-derivative test
+
+[Requests](https://github.com/psf/requests) and [Niquests](https://github.com/jawah/niquests) are public
+repositories; GitHub explicitly identifies Niquests as a Requests fork. On the commits recorded in
+[`test-cohort/requests-niquests.json`](test-cohort/requests-niquests.json), ARGUS measured **70.63%**
+Requests→Niquests containment and **28.15%** in reverse, triggering the unchanged 70% review threshold.
+Their corresponding `sessions.py` files contain 920 and 2,247 lines with different hashes; this is a
+modified derivative, not an identical-file fixture. It is a legitimate reuse example, not a misconduct claim.
+The manifest records modes, commit hashes, changed-file evidence, and reproducible API input.
+
+## Complete an evaluation
+
+A batch reaching `done` means its queue and comparisons finished. It does **not** mean every repository
+passed, nor that all required checks were completed. Inspect each individual report and its coverage.
+
+| Individual status | Meaning | CLI exit |
+|---|---|---|
+| `DONE_CLEAN` | All applicable checks completed, with no findings, review requirements, errors, or coverage gaps | 0 |
+| `DONE_WITH_FINDINGS` | Evaluation completed with non-material findings, failed checks, or optional evidence gaps | 0 |
+| `FLAGGED` | Required checks completed and an unresolved material concern requires review | 3 |
+| `INCOMPLETE_EVALUATION` | At least one mandatory check could not be verified | 4 |
+| `EVALUATOR_ERROR` | Collector, provider, reasoning, or report validation failed | 5 |
+
+Evaluation errors take precedence over missing mandatory evidence, which takes precedence over material
+findings. A report may therefore contain a verified similarity flag while its completion state remains
+incomplete. These are separate facts and both remain visible. Configuration/usage errors use exit 2.
+
+To obtain a full evaluation:
+
+- Make the selected provider available; confirm the model tag or API key and account access.
+- Enable AI reasoning. `--no-llm` and the deterministic-only checkbox intentionally skip required reasoning
+  checks and **cannot produce a complete evaluation**.
+- Ensure the full repository history can be acquired. If `--require-similarity` is enabled, supply valid
+  reference repositories with `--compare`.
+- Open a failed report, inspect `errors`, `coverage`, and `definition_of_done.reasons`, fix the recorded
+  cause, and rerun with AI enabled. The new report has a new evaluation ID; earlier evidence is retained.
+- Allow the backend and provider to finish. If a queue was interrupted by a backend restart, resubmit it.
+
+ARGUS never converts skipped, unavailable, refused, truncated, or invalid model output into a pass.
+The model gets one repair attempt for invalid structured output. Material findings can require manual
+review even after all automated checks finish; a completed evaluation need not be clean.
+
+## CLI
+
+```bash
+# Full evaluation using configured provider
+argus evaluate https://github.com/owner/repository
+
+# Compare local or public repositories, with a mandatory provenance check
+argus evaluate ./target --compare ./reference --require-similarity
+
+# A deadline must include the intended timezone
+argus evaluate ./target --deadline '2026-10-01T18:00:00+02:00'
+
+# Explicit collection-only diagnostic, intentionally incomplete
+argus evaluate ./target --no-llm
+```
+
+Additional options: `--provider`, `--model`, `--fallback-model`, `--config`, `--backend ollama|openai`
+(the latter selects the local runtime protocol), `--base-url`, `--similarity-threshold`, `--out`,
+`--no-github-api`, `--keep-clone`, `--quiet`. Run `argus evaluate --help` for the full interface.
+Passing multiple targets to the CLI evaluates them sequentially; automatic all-pairs comparison and
+batch statistics are provided by the batch API/UI.
 
 ## Configuration
 
-Precedence: defaults < `argus.toml` (see `argus.example.toml`) < environment (see `.env.example`) < CLI flags.
+Precedence: **defaults < `argus.toml` < environment < CLI flags**. See
+[`argus.example.toml`](argus.example.toml), [`argus.gemma.toml`](argus.gemma.toml), and
+[`.env.example`](.env.example). ARGUS does not automatically load `.env`; export variables or use an
+appropriate process launcher. Restart the backend after changing its environment or configuration.
 
-| Variable | Default | Purpose |
+| Variable | Purpose / default |
+|---|---|
+| `ARGUS_LLM_PROVIDER` | `qwen` by default; also `ollama`, `openai`, `anthropic`/`claude` |
+| `ARGUS_MODEL` | Server/CLI model; local default `qwen3:4b`; provider changes select provider-specific defaults |
+| `ARGUS_FALLBACK_MODEL` | Optional local fallback; disabled by default and always reported when used |
+| `ARGUS_LLM_BACKEND` | Local transport: `ollama` or OpenAI-compatible `openai` |
+| `ARGUS_LLM_BASE_URL` | Server/CLI endpoint; default `http://localhost:11434` locally |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | Backend-only hosted credentials; `ARGUS_LLM_API_KEY` is a generic fallback |
+| `ARGUS_OPENAI_MODEL`, `ARGUS_ANTHROPIC_MODEL` | Model for each explicit hosted choice in the UI |
+| `ARGUS_OPENAI_BASE_URL`, `ARGUS_ANTHROPIC_BASE_URL` | Optional HTTPS endpoints for explicit hosted UI choices |
+| `ARGUS_LLM_MAX_TOKENS`, `ARGUS_LLM_NUM_CTX` | Answer token limit / local context: `1536` / `8192` |
+| `ARGUS_LLM_PACKET_CHARS` | Evidence packet character budget: `9000` |
+| `ARGUS_LLM_TEMPERATURE`, `ARGUS_LLM_TIMEOUT` | Temperature / request timeout: `0.1` / `900` seconds |
+| `ARGUS_LLM_THINK` | Qwen local thinking toggle: `false` |
+| `ARGUS_LLM_MODEL_TAG`, `ARGUS_LLM_FALLBACK_MODEL_TAG` | Exact local runtime tags when logical model mapping is insufficient |
+| `ARGUS_SIMILARITY_THRESHOLD` | Code containment threshold: `0.70` |
+| `GITHUB_TOKEN` or `GH_TOKEN` | Optional REST API authentication; required for some PR review detail |
+| `ARGUS_SCC_PATH` | Optional path to scc |
+| `ARGUS_REPORTS_DIR` | Saved output directory: `argus-reports` |
+| `ARGUS_ALLOWED_ORIGINS` | Additional exact browser origins, comma-separated; no wildcards |
+| `HOST`, `PORT` | Bind address for `python -m argus.server`: `127.0.0.1`, `8000` |
+| `NEXT_PUBLIC_API_URL` | Frontend backend URL; unset in a production build selects the static demo |
+
+The **Server default** UI choice uses the normal configuration chain. Explicit hosted UI choices use
+provider-specific defaults and `ARGUS_OPENAI_*` / `ARGUS_ANTHROPIC_*` settings. When switching the server
+provider, defaults replace local model/URL settings; explicit model/URL values at the same precedence
+level override them. Do not export a local model or localhost endpoint while selecting a hosted API.
+
+## HTTP API
+
+| Method | Endpoint | Purpose |
 |---|---|---|
-| `ARGUS_LLM_PROVIDER` | `qwen` | provider registered behind `LLMProvider` |
-| `ARGUS_MODEL` | `qwen3:4b` | model served by the local runtime; `qwen3:8b` also supported (`ARGUS_LLM_MODEL` is still accepted) |
-| `ARGUS_FALLBACK_MODEL` | *(none)* | optional; used if the primary is not installed or fails at runtime, and always reported |
-| `ARGUS_ALLOWED_ORIGINS` | – | local API: extra browser origins allowed by CORS (exact origins, comma-separated) |
-| `NEXT_PUBLIC_API_URL` | *(unset)* | frontend: backend address. Unset = public demo mode; `ui/.env.development` sets `http://localhost:8000` |
-| `HOST` / `PORT` | `127.0.0.1` / `8000` | web API bind address for `python -m argus.server` |
-| `ARGUS_REPORTS_DIR` | `argus-reports` | where reports are written |
-| `ARGUS_LLM_BACKEND` | `ollama` | `ollama`, or `openai` for any OpenAI-compatible local server (vLLM, llama.cpp, LM Studio) |
-| `ARGUS_LLM_BASE_URL` | `http://localhost:11434` | runtime address |
-| `ARGUS_LLM_TEMPERATURE` / `ARGUS_LLM_MAX_TOKENS` / `ARGUS_LLM_NUM_CTX` | `0.1` / `1536` / `8192` | generation settings |
-| `ARGUS_LLM_PACKET_CHARS` | `9000` | evidence-packet size per reasoning step; raise on GPU hardware, lower on slow CPUs |
-| `ARGUS_LLM_MODEL_TAG`, `ARGUS_LLM_FALLBACK_MODEL_TAG` | – | exact runtime tag when it cannot be derived from the name |
-| `GITHUB_TOKEN` | – | optional; raises the API rate limit and enables PR review detail. Environment only. |
+| GET | `/api/health`, `/health` | Liveness |
+| GET | `/api/ready`, `/ready` | Queue capacity and configured-provider readiness |
+| GET | `/api/providers` | Selectable providers, model names, and whether hosted keys are configured; no keys returned |
+| GET | `/api/repositories/search?q=graph%20coloring` | Up to eight public, non-archived GitHub search results |
+| POST | `/api/batches` | Validate, deduplicate, and queue 1–50 repositories |
+| GET | `/api/batches` | Available saved/current batch summaries |
+| GET | `/api/batches/{batch_id}` | Queue progress, reports, overlap flags, pairwise evidence |
+| GET | `/api/batches/{batch_id}/statistics` | Measured rows and both eligible statistical populations |
+| POST | `/api/evaluate` | Legacy single-repository evaluation |
+| GET | `/api/jobs/{job_id}` | Individual job progress |
+| GET | `/api/evaluations` | Saved individual evaluations |
+| GET | `/api/evaluate/{evaluation_id}` | Public JSON report; `/json` is an alias |
+| GET | `/api/evaluate/{evaluation_id}/report` | Markdown report |
 
-Logical names are mapped to runtime tags (`Qwen3-8B` → `qwen3:8b` on Ollama, `Qwen/Qwen3-8B` on OpenAI-compatible
-servers); if that tag is not installed ARGUS looks for an installed model whose name contains the logical
-name (e.g. `hf.co/ggml-org/Qwen3-4B-GGUF:Q4_K_M`). Whenever the fallback is used, the report says so and why.
+Example **full** batch, using the configured provider:
 
-No credentials are stored in this repository. Tokens are read from the environment only and are never
-written to reports.
-
-## Architecture
-
-```text
-src/argus/
-├── cli.py                 argus evaluate …
-├── config.py              defaults < file < env < flags
-├── pipeline.py            orchestrator: collect → deterministic rules → reason → escalate → decide
-├── policy.py              finding taxonomy, candidate validation, observations, summary checks (pure)
-├── status.py              completion-state rules + Definition-of-Done (pure functions)
-├── report.py              Markdown + JSON from one object, plus report validation
-├── server.py              thin FastAPI layer for the web UI (no evaluation logic)
-├── demo.py                exports a finished evaluation as static demo data for the public frontend
-├── evidence.py            EvidenceStore and evidence-packet builder
-├── models.py              Evidence, Anomaly, Finding, Observation, CandidateDecision, AnalysisResult,
-│                          CoverageStatus, ManualReviewRequirement, IntegrityAssessment, FinalEvaluation
-├── collectors/            DETERMINISTIC LAYER (no LLM, never runs repository code)
-│   ├── gitutil.py         URL validation, safe clone, read-only git
-│   ├── classify.py        source / tests / config / docs / generated / vendored / lockfile / …
-│   ├── scc.py             scc (or labelled built-in fallback), meaningful-LOC estimate
-│   ├── commits.py         history parsing, classification, message quality, granularity, inflation
-│   ├── contributors.py    identity map, per-contributor metrics, authorship, co-author matrix
-│   ├── timeline.py        timeline, late-window share, deadline, branches, merges
-│   ├── github.py          repository metadata, pull requests, workflow runs (REST, read-only)
-│   ├── ci.py              GitHub Actions parsed and validated against tracked files
-│   ├── hygiene.py         structure, .gitignore, env files, redacted secret indicators, dependencies
-│   ├── readme.py          README technology claims cross-checked against manifests/paths/source
-│   ├── similarity.py      token-shingle containment against reference repositories
-│   └── signals.py         explicit AI-tool attribution signals, cross-agent handoffs
-└── llm/                   REASONING LAYER
-    ├── interface.py       LLMProvider abstraction + provider registry
-    ├── providers/qwen.py  QwenProvider with Ollama and OpenAI-compatible backends
-    ├── runner.py          prompt + packet → schema-constrained call → validation → one repair retry
-    ├── prompts/           system.md + one prompt per reasoning step
-    └── schemas/           JSON Schemas exported from the models
+```bash
+curl -X POST http://127.0.0.1:8000/api/batches \
+  -H 'Content-Type: application/json' \
+  -d '{"urls":["https://github.com/psf/requests","https://github.com/jawah/niquests"],"provider":"configured","deterministic_only":false}'
 ```
 
-### Deterministic vs LLM boundary
+Use the returned `batch_id` to poll. Explicit provider choices are `configured`, `openai`, or `anthropic`.
+The legacy endpoint accepts `url` and `deterministic_only` and uses the server default provider.
+Invalid input returns 422; an occupied queue returns 429 with `Retry-After`; unavailable GitHub search
+returns 503. Search failure does not prevent evaluation of pasted URLs.
 
-| Deterministic (authoritative) | LLM (interpretation only) |
-|---|---|
-| commits, authors, committers, co-authors, timestamps, branches, merges, PR metadata | commit-message and history interpretation |
-| LOC, scc statistics, generated/vendored classification | raw-vs-meaningful contribution interpretation |
-| identity normalisation, co-author matrix and ratios | whether a co-authorship pattern needs review |
-| timeline, late-window share, deadline checks | relating timeline, branches, PRs and code drops |
-| CI parsing and workflow/repository consistency | README-vs-implementation in context |
-| `.gitignore`, env files, secret patterns, dependency manifests | structure coherence |
-| similarity calculation and the 70 % threshold rule | provenance interpretation |
-| completion status and Definition of Done | cross-evidence synthesis, executive summary |
-
-Rules with no room for interpretation are applied in code, not by the model: committed credential
-indicators, similarity at or above the threshold (`SIMILARITY_THRESHOLD_EXCEEDED`, manual review, never a
-plagiarism verdict), committed env files and dependency directories, workflow/repository mismatches.
-
-### How model output is kept honest
-
-1. The model never sees the repository, only an evidence packet built from the evidence store (source code
-   is not sent). If a packet must be shortened, the omission count is stated inside the packet.
-2. The JSON Schema passed to the runtime for constrained decoding is narrowed per call: `evidence_ids` and
-   `anomaly_id` are enums of the ids in that packet.
-3. The response is validated with Pydantic and then checked for grounding: every cited id must be in the
-   packet and in the store, every finding needs at least one, categories/severities must be valid enums.
-4. On failure there is one controlled repair retry carrying the validation error. If that fails too, the
-   step is marked failed: the affected modules become `UNVERIFIABLE`, an evaluator error is recorded and
-   the evaluation ends as `EVALUATOR_ERROR`. Nothing is inferred on the model's behalf.
-5. Structural validity is not enough. Every candidate then goes through the deterministic policy layer
-   described next, which decides whether it is a finding at all.
-
-### Finding taxonomy and the policy layer
-
-The model only proposes *candidates*. `policy.py` classifies each one from the evidence it cites — never
-from its wording, its proposed severity or its request for manual review:
-
-```text
-FACT → OBSERVATION → ENGINEERING_WEAKNESS → ANOMALY → MATERIAL_INTEGRITY_CONCERN
-```
-
-| Type | Meaning | Where it appears | Outcome |
-|---|---|---|---|
-| `NORMAL` | ordinary repository characteristic | discarded; listed only in the policy audit table | – |
-| `OBSERVATION` | fact worth showing a reviewer | *Repository Observations* (not a finding, not counted) | – |
-| `ENGINEERING_WEAKNESS` | genuine engineering failure with a measured basis | *Engineering Weaknesses* | `FAIL` |
-| `ANOMALY` | deterministically detected pattern, not material | *Integrity Findings* | `PASS` |
-| `MATERIAL_INTEGRITY_CONCERN` | material pattern or hard rule; needs a human | *Integrity Findings* / *Security Findings* | `REVIEW` or `UNVERIFIABLE` |
-
-A candidate becomes a finding only if a deterministic basis exists, and that basis is recorded on the
-finding (`deterministic_basis`); the model's text is kept separately as `llm_reasoning`.
-
-- **Anomaly-anchored categories** (co-authorship, contribution, LOC, commit inflation, timeline, branch
-  workflow): a finding exists only if it cites an anomaly pattern that a collector detected. Category
-  and severity come from the anomaly, not from the model. One non-material anomaly gives `ANOMALY`; a
-  material anomaly, or two or more combined, gives `MATERIAL_INTEGRITY_CONCERN`.
-- **README_MISMATCH**: valid only for a claim the deterministic cross-check marked `CONTRADICTED`
-  (presence fully determined by tracked files, none exist, and the README states it without
-  qualification). A `VERIFIED` claim can never produce a mismatch.
-- **Commit traceability**: a weakness only when at least 5 commits exist and at least 30 % of messages
-  are low-information.
-- **Hygiene, CI, secrets, similarity**: raised by deterministic rules only; a model candidate there can
-  add reasoning to an existing finding and is otherwise discarded.
-- **AI assistance**: at most an observation, and only with explicit attribution signals.
-
-So facts such as a single contributor, a single commit, an initial scaffold commit, lockfile-heavy LOC,
-no co-authorship, no CI, no tests, no LICENSE, no pull requests or no further activity are reported as
-observations generated from the metrics. They cannot become findings unless a rule or an expectation you
-configured (for example `--deadline`) makes them one.
-
-The model is never the final authority on materiality, integrity flags, manual-review requirements,
-severity or status. In particular, a model "explanation" for a *material* anomaly is advisory: it is
-attached to the finding, and the manual-review requirement stays.
-
-### Executive summary
-
-The summary in the report is generated deterministically from the computed result. The model may add a
-narrative, which is accepted only if it is consistent with the final status, the integrity-flag,
-manual-review, evaluator-error and coverage-gap counts, uses no accusatory language, and contains no
-number that is absent from its evidence packet. A contradictory narrative is rejected (after one repair
-attempt), the rejection is shown in the report, and the computed result is unaffected. The same checks
-run again on the evaluation object and on the rendered Markdown before a report is trusted.
-
-### Anomaly lifecycle
-
-Collectors register anomaly patterns (`OBSERVED`, or `CORROBORATED` when backed by several evidence
-items). A non-material anomaly can be `RESOLVED` by a reasoning step with an evidence-grounded
-explanation, or `ASSESSED` when a finding cites it. A material anomaly always ends as a finding that
-requires manual review: `REVIEW` if a model offered an (advisory) explanation, `UNVERIFIABLE` if nothing
-explained it. Evaluator failures live in a separate `errors` list.
-
-### Completion states
-
-Evaluated in this order:
-
-| Status | When |
-|---|---|
-| `EVALUATOR_ERROR` | ARGUS itself failed: collector exception, model unavailable, reasoning step failed, inconsistent report |
-| `INCOMPLETE_EVALUATION` | a mandatory check is `UNVERIFIABLE` (repository or history unavailable, `--no-llm`, required similarity missing) |
-| `FLAGGED` | an open material finding exists (material anomaly, committed credential indicator, similarity at or above the threshold) |
-| `DONE_WITH_FINDINGS` | only engineering weaknesses or non-material anomalies, or optional checks unverifiable |
-| `DONE_CLEAN` | every check completed, no findings, no manual review, no errors, no unverifiable module (observations do not count) |
-
-The status is computed from deterministic inputs only. A reasoning step can still cause
-`EVALUATOR_ERROR` by failing, but it cannot produce `FLAGGED` or prevent it.
-
-Optional checks are those whose evidence lives outside the Git repository (`repository_metadata`,
-`pull_requests`, GitHub Actions run history). `similarity_analysis` and `code_provenance` become mandatory
-with `--require-similarity`.
-
-## Safety
-
-The target repository is untrusted input. ARGUS only accepts `https://github.com/<owner>/<repo>` URLs or an
-existing local directory, clones into its own temporary directory without submodules, LFS smudging, hooks,
-symlinks or credential helpers, and from then on only runs read-only `git` commands and static parsers. It
-never installs dependencies or runs scripts, binaries, workflows or containers from the repository.
-Secret indicators are redacted at the point of detection. Repository text that reaches the model (README
-excerpts, commit messages) is marked as untrusted data in the system prompt.
-
-## Tests
+## Reproducible tests
 
 ```bash
 python -m pytest
+npm --prefix ui run lint
+npm --prefix ui run build
 ```
 
-The default suite needs no model runtime: it builds throwaway Git repositories and drives the pipeline
-with a scripted provider. `tests/test_regression.py` replays the candidates Qwen3-8B actually produced in
-live runs and pins the policy that rejects them. The suite covers clean → `DONE_CLEAN`, anomalies → `DONE_WITH_FINDINGS` / `FLAGGED`,
-missing evidence → `INCOMPLETE_EVALUATION`, model failure → `EVALUATOR_ERROR`, invalid JSON, repair on
-retry, hallucinated evidence, similarity above threshold, redaction and report consistency.
+The default Python suite does not need a live model or paid API calls. It exercises real temporary Git
+repositories, deterministic collectors/policy, completion states, structured-output validation, redaction,
+provider HTTP contracts, batch queue/failure handling, persistence, statistics, and copied-code detection.
+Live model tests are separate: `python -m pytest -m live`.
+
+### Controlled copying fixture
 
 ```bash
-python -m pytest -m live
+python scripts/test_copied_repos.py
 ```
 
-runs a real evaluation with each installed Qwen3 model (skipped per model if it is not installed).
+Creates two independent temporary Git repositories containing deliberately identical graph-coloring
+source, runs real collectors and similarity policy, and saves a clearly labeled batch
+`c0c0c0c0c0c0` in `argus-reports`. Select it in the saved-batch picker. Expected: 100% overlap both ways,
+both participants flagged, zero in the primary population, two in the population including flags.
+This diagnostic intentionally skips AI; it verifies detection, not full reasoning completion. A negative
+test verifies that matching README formatting/text without source overlap does not flag a pair.
 
-## Known limits
+[`test-cohort/manifest.json`](test-cohort/manifest.json) contains public NP-hard-problem examples.
+`scripts/test_public_cohort.py` expects those repositories cloned under `test-cohort/repos` as described
+in [`test-cohort/README.md`](test-cohort/README.md). Any synthetic grade plots are explicitly labeled and
+are never represented as actual repository grades.
 
-- Similarity is measured only against repositories you pass with `--compare`. ARGUS does not search the
-  web for similar projects; without references the similarity module is `NOT_APPLICABLE` (or a mandatory
-  gap with `--require-similarity`) and the report states that provenance was not verified.
-- Secret scanning covers tracked files at the evaluated HEAD. History is checked for removed env files by
-  path, not by content.
-- Meaningful-LOC figures and the generated/vendored split come from path heuristics and are estimates.
-- README claims are detected from a fixed technology vocabulary; claims outside it are not checked.
-- The built-in line counter is a fallback for scc, not a replacement.
-- Pull-request review detail is fetched only when `GITHUB_TOKEN` is set.
+## Architecture and evidence policy
+
+```text
+src/argus/
+  pipeline.py       acquire → collect → deterministic rules → reason → policy → validate
+  collectors/       safe Git access, history, contributors, timeline, CI, hygiene, README, similarity
+  evidence.py       evidence store, bounded packets, known IDs
+  policy.py         grounding, finding taxonomy, deterministic summary checks
+  status.py         completion states and Definition of Done
+  report.py         Markdown + JSON from the same validated evaluation
+  llm/              Ollama/Qwen/OpenAI/Claude providers, prompts, schema validation and repair
+  server.py         API, serial batches, repository discovery, persisted batch summaries
+  cohort.py         pairwise comparisons, overlap flags, verified-grade population helpers
+  statistics.py     evidence metrics, population filtering, descriptive distributions
+  benchmarks.py     validated objective/reference comparison helpers
+ui/app/             batch-first interface, reports, statistical charts
+```
+
+The model receives structured evidence packets, including relevant repository text where needed,
+not an unrestricted repository checkout. Repository text is untrusted input. Every proposed finding
+must cite evidence IDs actually provided in the packet. Schema and grounding validation reject unknown
+IDs, invalid anomaly references, and unsupported classifications. Deterministic policy decides the
+finding type, severity, materiality, and manual-review requirement.
+
+Facts such as a single contributor, missing CI, no LICENSE, or an initial scaffold are not automatically
+misconduct. A finding requires a measured rule or configured expectation. AI-tool attribution signals
+are observations unless independently grounded rules justify more. Material anomalies retain manual
+review even when a model offers a plausible explanation.
+
+Executive summaries are generated from the computed status/counts. A model narrative is optional and
+must pass consistency checks; it cannot contradict measured results or replace the deterministic summary.
+
+## Deployment and data handling
+
+Targets are cloned into evaluator-owned temporary directories. ARGUS does not install target dependencies
+or execute target scripts, tests, workflows, containers, or binaries. Clone safeguards disable hooks,
+submodules, LFS smudging, symlinks, and credential helpers. Evaluation uses read-only Git and static parsers.
+Secret indicators are redacted at detection. The API strips checkout paths, local runtime addresses,
+and full email addresses from reports. API credentials are read only from the environment.
+
+Reports live in `argus-reports` as `<repository>.<evaluation_id>.md` and `.json`. Completed batch summaries
+live beside them as `batch-<id>.json`. Keep these directories on persistent storage when required.
+Temporary clones are removed after batch comparison. Historical commits with invalid ISO timezone
+offsets use Git's Unix timestamp in UTC; the normalization is recorded in
+`deterministic_metrics.commits.timestamp_normalizations` rather than silently dropping history.
+
+The local backend has no user authentication. Its default binding is loopback. CORS allows
+`http://localhost:3000` and `http://127.0.0.1:3000` plus explicitly configured origins. CORS is not an
+authentication mechanism; add appropriate access control before exposing a live evaluator remotely.
+
+### Static public demo
+
+Without `NEXT_PUBLIC_API_URL` in a production build, the UI shows the saved evaluation bundled under
+`ui/public/demo`. It does not contact a backend or run new evaluations. The bundled Qwen3-8B report for
+`gegedobruna/data-capstone` is distinct from current local runs. Live batch controls are disabled.
+
+For Vercel, use `ui` as the project root and leave `NEXT_PUBLIC_API_URL` unset. To replace demo data with
+a validated saved report:
+
+```bash
+python -m argus.demo path/to/report.json
+```
+
+A hosted live deployment additionally needs the backend, configured provider, persistent reports,
+network access, and access controls. A static frontend alone cannot evaluate repositories.
+
+## Limits and troubleshooting
+
+| Symptom | Check / action |
+|---|---|
+| UI shows a static demo | Set `NEXT_PUBLIC_API_URL` for the intended frontend environment and restart/rebuild |
+| Backend unavailable | Start it from the repository root; check `/health`, API URL, and exact CORS origin |
+| AI unavailable | Check `/ready`, Ollama service/model tag, or backend API key and model access |
+| Hosted key configured but call fails | Inspect report errors for authentication, quota, timeout, model, or output-validation failure |
+| Slow local reasoning | Check RAM/VRAM and CPU fallback; use a model/context that fits, and allow enough time |
+| Queue returns 429 | Wait for the active batch; inference is intentionally serial |
+| Old batch unavailable after restart | Running queues are not resumed; resubmit. Completed reports and saved batch summaries remain available |
+| Incomplete result | Follow [Complete an evaluation](#complete-an-evaluation); do not hide missing mandatory checks |
+| Similarity is unavailable | Both repositories must be acquired and contain eligible source/test shingles |
+| Shared README, no code flag | Expected: README similarity is advisory |
+
+Additional limits:
+
+- Batch comparisons cover supplied repositories only. CLI similarity covers `--compare` references only.
+  ARGUS does not search the entire web for copied projects.
+- Token similarity can miss extensive identifier changes or semantic rewrites, and shared templates can
+  produce legitimate overlap. It is evidence for review, not a plagiarism verdict.
+- Secret scanning checks tracked HEAD content; historical removed env files are identified by path,
+  not a complete scan of all historical secret content.
+- Meaningful-source and generated/vendor classification use path heuristics. README checks use a fixed
+  technology vocabulary. Neither establishes full requirement compliance.
+- Optional GitHub metadata may be unavailable due to access/rate limits. scc fallback has no complexity metric.
+- Benchmark helpers require matching instances/objectives and independent feasibility evidence.
+  Their 10% quality tolerance does not certify solver feasibility, normalize arbitrary hardware, search
+  current frontier results automatically, or award assignment points. See
+  [`docs/cohort-evaluation-spec.md`](docs/cohort-evaluation-spec.md) for implemented scope and pending grading inputs.

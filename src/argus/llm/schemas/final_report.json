@@ -315,6 +315,7 @@
           "type": "string"
         },
         "data": {
+          "additionalProperties": true,
           "title": "Data",
           "type": "object"
         }
@@ -624,10 +625,12 @@
       "type": "string"
     },
     "repository": {
+      "additionalProperties": true,
       "title": "Repository",
       "type": "object"
     },
     "model": {
+      "additionalProperties": true,
       "title": "Model",
       "type": "object"
     },
@@ -639,10 +642,12 @@
       "type": "array"
     },
     "deterministic_metrics": {
+      "additionalProperties": true,
       "title": "Deterministic Metrics",
       "type": "object"
     },
     "llm_analyses": {
+      "additionalProperties": true,
       "title": "Llm Analyses",
       "type": "object"
     },
@@ -686,12 +691,14 @@
     },
     "handoffs": {
       "items": {
+        "additionalProperties": true,
         "type": "object"
       },
       "title": "Handoffs",
       "type": "array"
     },
     "manual_review": {
+      "additionalProperties": true,
       "title": "Manual Review",
       "type": "object"
     },
@@ -710,6 +717,7 @@
       "type": "array"
     },
     "executive_summary": {
+      "additionalProperties": true,
       "title": "Executive Summary",
       "type": "object"
     },

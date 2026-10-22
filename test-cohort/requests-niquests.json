@@ -1,0 +1,71 @@
+{
+  "purpose": "Real public modified-derivative overlap test. Declared open-source fork, not an allegation of plagiarism.",
+  "repositories": [
+    {
+      "url": "https://github.com/psf/requests",
+      "head": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60"
+    },
+    {
+      "url": "https://github.com/jawah/niquests",
+      "head": "fd4cf2a3e46e28e2765433da9a3c02a3e6e1f629"
+    }
+  ],
+  "provenance_source": "https://github.com/jawah/niquests",
+  "batch_id": "1549b89b779d",
+  "mode": "deterministic_only",
+  "threshold": 0.7,
+  "modified_file_evidence": {
+    "purpose": "Public documented fork with modified source; not a plagiarism claim",
+    "files": [
+      {
+        "repository": "psf/requests",
+        "head": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+        "path": "src/requests/sessions.py",
+        "lines": 920,
+        "sha256": "3d2089736ced93b2b405624a943f866d22652b17df06a85eb010f86272fc3e7d"
+      },
+      {
+        "repository": "jawah/niquests",
+        "head": "fd4cf2a3e46e28e2765433da9a3c02a3e6e1f629",
+        "path": "src/niquests/sessions.py",
+        "lines": 2247,
+        "sha256": "11239e733922ae4c50ab74ffcaaae0c34dc18d736ead5fa17455c7c2ced29d97"
+      }
+    ],
+    "identical": false,
+    "line_sequence_similarity": 0.19071676665614146
+  },
+  "reproduce": {
+    "method": "POST",
+    "path": "/api/batches",
+    "body": {
+      "urls": [
+        "https://github.com/psf/requests",
+        "https://github.com/jawah/niquests"
+      ],
+      "deterministic_only": true
+    }
+  },
+  "results": {
+    "code_a_in_b": 0.7063,
+    "code_b_in_a": 0.2815,
+    "flagged": true,
+    "evaluator_errors": [
+      0,
+      0
+    ],
+    "timestamp_normalizations": [
+      1,
+      1
+    ],
+    "population_counts": {
+      "without_flagged": 0,
+      "with_flagged": 2
+    },
+    "evaluation_ids": [
+      "argus-20261022T154033Z-662289a3",
+      "argus-20261022T154116Z-1a0ad29a"
+    ],
+    "elapsed_s": 69.0
+  }
+}

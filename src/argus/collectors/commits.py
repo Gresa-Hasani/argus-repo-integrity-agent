@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,7 @@ from argus.collectors.gitutil import git
 from argus.evidence import EvidenceStore
 from argus.models import Category, Severity
 
-_FORMAT = "%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%aI%x1f%cI%x1f%s%x1f%b%x1f"
+_FORMAT = "%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%aI%x1f%cI%x1f%at%x1f%ct%x1f%s%x1f%b%x1f"
 _COAUTHOR = re.compile(r"^\s*co-authored-by:\s*(.*?)\s*<([^<>]*)>\s*$", re.I | re.M)
 _COAUTHOR_ANY = re.compile(r"^\s*co-authored-by:", re.I | re.M)
 
@@ -69,6 +69,7 @@ class Commit:
     malformed_coauthor_trailers: int = 0
     classification: str = "UNCLEAR"
     on_default: bool = True
+    timestamp_notes: list[str] = field(default_factory=list)
 
     @property
     def is_merge(self) -> bool:
@@ -101,6 +102,7 @@ class Commit:
             "deletions": self.deletions,
             "meaningful_additions": self.meaningful_additions,
             "classification": self.classification,
+            "timestamp_notes": self.timestamp_notes,
         }
 
 
@@ -113,15 +115,25 @@ def parse_history(repo: Path, default_branch: str) -> list[Commit]:
     commits: list[Commit] = []
     for record in out.split("\x1e")[1:]:
         parts = record.split("\x1f")
-        if len(parts) < 11:
+        if len(parts) < 13:
             continue
-        sha, parents, an, ae, cn, ce, at, ct, subject, body = parts[:10]
+        sha, parents, an, ae, cn, ce, at, ct, at_epoch, ct_epoch, subject, body = parts[:12]
+        notes = []
+        def parse_date(raw: str, epoch: str, label: str) -> datetime:
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                # Old Git objects may contain invalid timezone offsets. Their Unix
+                # timestamp still represents an unambiguous instant; do not drop history.
+                notes.append(f"{label} has an invalid ISO timezone ({raw}); used Git Unix timestamp {epoch} in UTC")
+                return datetime.fromtimestamp(int(epoch), timezone.utc)
         commit = Commit(
             sha=sha.strip(), parents=parents.split(), author_name=an, author_email=ae, committer_name=cn,
-            committer_email=ce, author_time=datetime.fromisoformat(at), commit_time=datetime.fromisoformat(ct),
+            committer_email=ce, author_time=parse_date(at, at_epoch, "author_time"), commit_time=parse_date(ct, ct_epoch, "commit_time"),
+            timestamp_notes=notes,
             subject=subject, body=body,
         )
-        for line in parts[10].splitlines():
+        for line in parts[12].splitlines():
             cols = line.split("\t")
             if len(cols) != 3:
                 continue
@@ -342,6 +354,7 @@ def analyze(repo: Path, commits: list[Commit], store: EvidenceStore, cfg) -> dic
 
     return {
         "total": len(commits),
+        "timestamp_normalizations": [{"sha": c.sha, "notes": c.timestamp_notes} for c in commits if c.timestamp_notes],
         "non_merge": len(non_merge),
         "merge": len(commits) - len(non_merge),
         "on_default_branch": sum(c.on_default for c in commits),

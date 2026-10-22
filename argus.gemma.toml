@@ -1,0 +1,11 @@
+# Local Gemma 3 12B Q4_K_M profile. Requires this model installed in Ollama.
+[llm]
+provider = "ollama"
+model = "argus-gemma3:12b"
+backend = "ollama"
+base_url = "http://127.0.0.1:11434"
+num_ctx = 8192
+temperature = 0.1
+max_tokens = 1536
+packet_chars = 9000
+think = false
