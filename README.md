@@ -239,6 +239,22 @@ ARGUS never converts skipped, unavailable, refused, truncated, or invalid model 
 The model gets one repair attempt for invalid structured output. Material findings can require manual
 review even after all automated checks finish; a completed evaluation need not be clean.
 
+### Full-run validation example
+
+The Requests/Niquests pair was rerun with **Gemma 3 12B**, with AI enabled rather than collection-only
+mode. Both reports finished as `FLAGGED`; all applicable checks completed with **zero evaluator errors,
+zero unverifiable checks, and zero mandatory coverage gaps**. Every reasoning step, including the final
+narrative, returned validated output. Material findings remain for human review.
+
+| Repository | Final status | Applicable checks completed | Evaluator errors |
+|---|---|---|---|
+| `psf/requests` | `FLAGGED` | 31/31 | 0 |
+| `jawah/niquests` | `FLAGGED` | 32/32 | 0 |
+
+The exact commits, model, evaluation IDs, step outcomes, and durations are recorded under
+`full_evaluation` in [`test-cohort/requests-niquests.json`](test-cohort/requests-niquests.json). Earlier
+collection-only diagnostics remain separate historical records; the complete runs do not erase them.
+
 ## CLI
 
 ```bash
