@@ -41,3 +41,13 @@ def test_normal_fit_statistics_and_missing_measurements():
     assert len(dist['normal_fit']) == 101 and sum(dist['bins']) == 3
     assert dist['bins'][0] == dist['bins'][5] == dist['bins'][9] == 1
     assert cohort_statistics([])['populations'][0]['distributions']['commits']['mean'] is None
+
+
+def test_full_finding_details_are_preserved_in_chart_data():
+    finding = {'finding_id': 'ARGUS-TEST-1', 'title': 'Example', 'severity': 'HIGH',
+               'category': 'SIMILARITY', 'finding': 'Measured overlap', 'reasoning': 'Threshold exceeded',
+               'evidence_ids': ['EV-1'], 'evidence': [{'id':'EV-1','data':{'overlap':.9}}], 'requires_manual_review': True}
+    row = report_statistics(report(findings=[finding]))
+    assert row['severity'] == {'HIGH':1} and row['categories'] == {'SIMILARITY':1}
+    assert row['finding_details'][0]['finding'] == 'Measured overlap'
+    assert row['finding_details'][0]['evidence'] == finding['evidence']

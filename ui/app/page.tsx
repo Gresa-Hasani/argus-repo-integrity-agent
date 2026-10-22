@@ -423,6 +423,7 @@ export default function Home() {
   const [searchError, setSearchError] = useState("");
   const [deterministicOnly, setDeterministicOnly] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [batch, setBatch] = useState<any>(null);
   const [savedBatches, setSavedBatches] = useState<any[]>([]);
   const [job, setJob] = useState<any>(null);
@@ -439,7 +440,7 @@ export default function Home() {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingGeneration = useRef(0);
   const selection = repositorySelection(repositoryText);
-  const running = submitting || ["running", "comparing"].includes(batch?.state);
+  const running = submitting || ["running", "comparing", "stopping"].includes(batch?.state);
   const liveDisabled = DEMO_MODE || backendDown;
   const selectedProvider = providers.find(p => p.id === provider);
   const providerUnavailable = provider === "configured" ? ready?.ai_reasoning_available === false : !selectedProvider?.configured;
@@ -491,11 +492,11 @@ export default function Home() {
         if (generation !== pollingGeneration.current) return;
         if (firstPoll) {
           if (!value.fixture) setRepositoryText((text) => text.trim() ? text : value.items.map((item: any) => `https://github.com/${item.repository}`).join("\n"));
-          if (["running", "comparing"].includes(value.state)) { setDeterministicOnly(value.items.every((item: any) => item.deterministic_only)); setProvider(value.provider ?? "configured"); }
+          if (["running", "comparing", "stopping"].includes(value.state)) { setDeterministicOnly(value.items.every((item: any) => item.deterministic_only)); setProvider(value.provider ?? "configured"); }
           firstPoll = false;
         }
         setBatch(value); setJob(value.items.find((item: any) => item.state === "running") ?? null);
-        if (!["running", "comparing"].includes(value.state)) {
+        if (!["running", "comparing", "stopping"].includes(value.state)) {
           if (timer.current) clearInterval(timer.current);
           await refreshSaved();
           fetch(`${API}/api/ready`).then((r) => r.json()).then(setReady).catch(() => null);
@@ -555,6 +556,17 @@ export default function Home() {
       trackBatch(body.batch_id);
     } catch { setBackendDown(true); setError("Cannot reach the local ARGUS backend. Start it and reload this page."); }
     finally { setSubmitting(false); }
+  };
+
+  const stopEvaluation = async () => {
+    if (!batch || stopping) return;
+    setStopping(true); setError("");
+    try {
+      const response = await fetch(`${API}/api/batches/${batch.batch_id}/stop`, {method: "POST"});
+      if (!response.ok) throw new Error();
+      setBatch(await response.json());
+    } catch { setError("Could not stop the evaluation. Retry Stop evaluation."); }
+    finally { setStopping(false); }
   };
 
   const repositoryCards = (rows: any[]) => rows.map((repo) => {
@@ -619,9 +631,12 @@ export default function Home() {
         {!DEMO_MODE && !!savedBatches.length && <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"><label className="text-sm text-slate-300">View saved batch results<select aria-label="View saved batch results" value={batch?.batch_id ?? ""} disabled={running} onChange={e => { if (e.target.value) { setError(""); setRepositoryText(""); trackBatch(e.target.value); try { localStorage.setItem("argus.latestBatch", e.target.value); } catch {} } }} className="mt-2 w-full rounded border border-slate-700 bg-slate-950 p-2 text-xs"><option value="">Choose a completed batch to display its graphs</option>{batch && !savedBatches.some(b => b.batch_id === batch.batch_id) && <option value={batch.batch_id}>Current batch · {batch.total} repositories</option>}{savedBatches.map(b => <option key={b.batch_id} value={b.batch_id}>{b.batch_id} · {b.total} repositories · {b.model} · {b.state.replaceAll("_", " ")}</option>)}</select></label></div>}
         {batch && <Section title="Repository statistics" hint="Per-repository measurements · shared comparison scales"><RepositoryStatistics key={batch.batch_id} api={API} batchId={batch.batch_id} revision={`${batch.completed}:${batch.state}`} /></Section>}
         {batch && <Section title="Batch evaluation" hint={`${batch.completed}/${batch.total} finished · ${batch.state.replaceAll("_", " ")} · ${batch.elapsed_s}s`}>
+          {running && <button type="button" onClick={stopEvaluation} disabled={stopping || batch.state === "stopping"} className="mb-4 rounded border border-red-500/60 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200 disabled:opacity-50">{stopping || batch.state === "stopping" ? "Stopping evaluation…" : "Stop evaluation"}</button>}
+          {batch.state === "cancelled" && <p role="status" className="mb-3 text-sm text-amber-200">Evaluation stopped. {batch.cancelled ?? 0} repositories cancelled. Completed reports remain available.</p>}
+          {batch.state === "stopping" && <p role="status" className="mb-3 text-sm text-amber-200">Stopping the active worker and cancelling the remaining queue…</p>}
           <p className="mb-3 text-xs text-slate-400">{batch.fixture && <strong className="mr-2 text-sky-200">Controlled local test · generated repositories, not public GitHub links.</strong>}Model: {batch.model} · Each result keeps its own integrity status.</p>
           <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="pb-2">Repository</th><th>Status</th><th>Report</th></tr></thead><tbody>
-            {batch.items.map((item: any) => <tr key={item.job_id} className="border-t border-slate-800"><td className="py-3 pr-3">{batch.fixture ? <span className="break-all font-mono text-xs text-sky-200">{item.repository}</span> : <a href={`https://github.com/${item.repository}`} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-sky-200">{item.repository}</a>}{item.error && <p className="mt-1 text-xs text-red-300">{item.error}</p>}</td><td className="pr-3">{item.similarity_flagged && <div className="mb-1"><Badge className={STATUS_STYLE.FLAGGED}>CODE OVERLAP · REVIEW REQUIRED</Badge></div>}{item.completion_status ? <Badge className={STATUS_STYLE[item.completion_status]}>{item.completion_status}</Badge> : <span className={item.state === "failed" ? "text-red-300" : "text-slate-300"}>{item.state === "running" ? item.stages[item.stage_index] ?? "Running" : item.state === "queued" ? "Queued" : item.state === "failed" ? "Failed" : "Report ready"}</span>}</td><td>{item.evaluation_id && <button onClick={() => open(item.evaluation_id, "api")} className="rounded border border-slate-600 px-3 py-1 text-xs hover:border-sky-500">Open report</button>}</td></tr>)}
+            {batch.items.map((item: any) => <tr key={item.job_id} className="border-t border-slate-800"><td className="py-3 pr-3">{batch.fixture ? <span className="break-all font-mono text-xs text-sky-200">{item.repository}</span> : <a href={`https://github.com/${item.repository}`} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-sky-200">{item.repository}</a>}{item.error && <p className="mt-1 text-xs text-red-300">{item.error}</p>}</td><td className="pr-3">{item.similarity_flagged && <div className="mb-1"><Badge className={STATUS_STYLE.FLAGGED}>CODE OVERLAP · REVIEW REQUIRED</Badge></div>}{item.completion_status ? <Badge className={STATUS_STYLE[item.completion_status]}>{item.completion_status}</Badge> : <span className={item.state === "failed" ? "text-red-300" : "text-slate-300"}>{item.state === "running" ? item.stages[item.stage_index] ?? "Running" : item.state === "queued" ? "Queued" : item.state === "failed" ? "Failed" : item.state === "cancelled" ? "Stopped" : "Report ready"}</span>}</td><td>{item.evaluation_id && <button onClick={() => open(item.evaluation_id, "api")} className="rounded border border-slate-600 px-3 py-1 text-xs hover:border-sky-500">Open report</button>}</td></tr>)}
           </tbody></table></div>
           {batch.state === "comparing" && <p className="mt-3 text-sm text-sky-200">Comparing repository code and README patterns…</p>}
           {batch.cross_validation_error && <p role="alert" className="mt-3 text-sm text-amber-200">{batch.cross_validation_error}</p>}

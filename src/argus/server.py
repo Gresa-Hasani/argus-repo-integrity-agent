@@ -37,6 +37,7 @@ from argus.llm.interface import LLMError, create_provider
 from argus.models import FinalEvaluation
 from argus.pipeline import Evaluation
 from argus.statistics import cohort_statistics, report_statistics
+from argus.worker import EvaluationCancelled, run_comparison, run_evaluation
 
 log = logging.getLogger("argus.server")
 
@@ -174,12 +175,13 @@ def llm_ready(max_age: float = 30.0) -> bool:
 def active_jobs() -> int:
     with _lock:
         return sum(job["state"] in {"running", "queued"} for job in _jobs.values()) + sum(
-            batch["state"] in {"running", "comparing"} for batch in _batches.values())
+            batch["state"] in {"running", "comparing", "stopping"} for batch in _batches.values())
 
 
 # ------------------------------------------------------------------ job execution
 def _run(job_id: str, url: str, deterministic_only: bool) -> None:
     job = _jobs[job_id]
+    cancel = job.setdefault("cancel", threading.Event())
 
     def progress(message: str) -> None:
         text = scrub_text(message.strip())
@@ -196,10 +198,19 @@ def _run(job_id: str, url: str, deterministic_only: bool) -> None:
         if deterministic_only:
             cfg.llm_enabled = False
         cfg.work_dir = job.get("work_dir") or cfg.work_dir
-        evaluation = Evaluation(url, cfg, None, progress)  # the temporary clone is removed in Evaluation.run()'s finally
         with _lock:
             job["model"] = cfg.llm_model if cfg.llm_enabled else "disabled (deterministic only)"
-        result = evaluation.run()
+        if cancel.is_set():
+            raise EvaluationCancelled()
+        # The parent owns temporary storage so it is cleaned even when a worker is killed.
+        if cfg.work_dir:
+            result = run_evaluation(url, cfg, progress, cancel)
+        else:
+            with tempfile.TemporaryDirectory(prefix="argus-job-") as root:
+                cfg.work_dir = root
+                result = run_evaluation(url, cfg, progress, cancel)
+        if cancel.is_set():
+            raise EvaluationCancelled()
         with _lock:
             job["stage_index"] = 4
             job["log"].append("Writing and validating reports")
@@ -209,6 +220,10 @@ def _run(job_id: str, url: str, deterministic_only: bool) -> None:
                        completion_status=result.completion_status.value,
                        acquired=bool(result.repository.get("acquisition", {}).get("success")))
             job["log"].append(f"Evaluation status: {result.completion_status.value}")
+    except EvaluationCancelled:
+        with _lock:
+            job.update(state="cancelled", finished=time.time())
+            job["log"].append("Evaluation stopped by user. No partial report was saved.")
     except Exception:
         # Details stay in the server log. The browser gets a fixed message: no traceback, path or command.
         log.exception("evaluation job %s failed", job_id)
@@ -244,7 +259,8 @@ def _batch_view(batch: dict[str, Any]) -> dict[str, Any]:
             item["similarity_flagged"] = item["repository"] in flags
         return {
             "batch_id": batch["batch_id"], "state": batch["state"], "model": batch["model"], "provider": batch.get("provider", "configured"),
-            "total": len(items), "completed": sum(j["state"] in {"done", "failed"} for j in items),
+            "total": len(items), "completed": sum(j["state"] in {"done", "failed", "cancelled"} for j in items),
+            "cancelled": sum(j["state"] == "cancelled" for j in items),
             "failed": sum(j["state"] == "failed" for j in items), "items": items,
             "cross_validation": batch.get("cross_validation", []),
             "cross_validation_error": batch.get("cross_validation_error"),
@@ -255,6 +271,7 @@ def _batch_view(batch: dict[str, Any]) -> dict[str, Any]:
 
 def _run_batch(batch_id: str) -> None:
     batch = _batches[batch_id]
+    cancel = batch.setdefault("cancel", threading.Event())
     try:
         # Retain each safe clone only until pairwise comparison has finished.
         with tempfile.TemporaryDirectory(prefix="argus-batch-") as root:
@@ -262,6 +279,9 @@ def _run_batch(batch_id: str) -> None:
             for job_id in batch["job_ids"]:
                 job = _jobs[job_id]
                 with _lock:
+                    if cancel.is_set():
+                        break
+                    job["cancel"] = cancel
                     job.update(state="running", started=time.time(), work_dir=str(Path(root) / job_id))
                 try:
                     _run(job_id, job["url"], job["deterministic_only"])
@@ -272,12 +292,17 @@ def _run_batch(batch_id: str) -> None:
                 path = Path(job["work_dir"]) / "target"
                 repositories.append({"slug": job["repository"], "local_path": str(path),
                                      "acquisition_status": "available" if job.get("acquired") and path.is_dir() else "unavailable"})
+            if cancel.is_set():
+                return
             with _lock:
                 batch["state"] = "comparing"
             try:
-                comparisons = cross_validate(repositories, threshold=load_config().similarity_threshold) if len(repositories) > 1 else []
+                comparisons = run_comparison(repositories, load_config().similarity_threshold, cancel) if len(repositories) > 1 else []
                 with _lock:
-                    batch["cross_validation"] = comparisons
+                    if not cancel.is_set():
+                        batch["cross_validation"] = comparisons
+            except EvaluationCancelled:
+                pass
             except Exception:
                 log.exception("batch pairwise comparison failed")
                 with _lock:
@@ -294,7 +319,11 @@ def _run_batch(batch_id: str) -> None:
         with _lock:
             failed = any(_jobs[j]["state"] == "failed" for j in batch["job_ids"])
             finished = time.time()
-            final_state = "done_with_errors" if failed or batch.get("cross_validation_error") else "done"
+            final_state = "cancelled" if cancel.is_set() else "done_with_errors" if failed or batch.get("cross_validation_error") else "done"
+            if cancel.is_set():
+                for job_id in batch["job_ids"]:
+                    if _jobs[job_id]["state"] in {"queued", "running"}:
+                        _jobs[job_id].update(state="cancelled", finished=finished)
             for job_id in batch["job_ids"]:
                 _jobs[job_id].pop("work_dir", None)
             snapshot = _batch_view(batch)
@@ -405,7 +434,7 @@ def create_app(env: Optional[Mapping[str, str]] = None) -> FastAPI:
                 continue
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
-                if value.get("batch_id") != path.stem.removeprefix("batch-") or value.get("state") not in {"done", "done_with_errors"}:
+                if value.get("batch_id") != path.stem.removeprefix("batch-") or value.get("state") not in {"done", "done_with_errors", "cancelled"}:
                     continue
                 rows[value["batch_id"]] = {k: value.get(k) for k in ("batch_id", "state", "model", "total", "completed")}
             except (OSError, ValueError, AttributeError):
@@ -453,12 +482,43 @@ def create_app(env: Optional[Mapping[str, str]] = None) -> FastAPI:
                 path = Path(load_config().out_dir) / f"batch-{batch_id}.json"
                 try:
                     saved = json.loads(path.read_text(encoding="utf-8"))
-                    if saved.get("batch_id") == batch_id and saved.get("state") in {"done", "done_with_errors"}:
+                    if saved.get("batch_id") == batch_id and saved.get("state") in {"done", "done_with_errors", "cancelled"}:
                         return saved
                 except (OSError, ValueError, AttributeError):
                     pass
             raise HTTPException(status_code=404, detail="Unknown batch. Saved reports remain available after a backend restart.")
         return _batch_view(batch)
+
+    @application.post("/api/batches/{batch_id}/stop")
+    def stop_batch(batch_id: str) -> dict[str, Any]:
+        with _lock:
+            batch = _batches.get(batch_id)
+            if not batch:
+                return batch_status(batch_id)  # completed saved batches are an idempotent no-op
+            if batch["state"] in {"running", "comparing", "stopping"}:
+                batch.setdefault("cancel", threading.Event()).set()
+                batch["state"] = "stopping"
+                for job_id in batch["job_ids"]:
+                    job = _jobs[job_id]
+                    job.setdefault("cancel", batch["cancel"]).set()
+                    if job["state"] == "queued":
+                        job.update(state="cancelled", finished=time.time())
+            return _batch_view(batch)
+
+    @application.post("/api/jobs/{job_id}/stop")
+    def stop_job(job_id: str) -> dict[str, Any]:
+        with _lock:
+            job = _jobs.get(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Unknown job.")
+            # Stopping a batch member stops its containing queue as well.
+            for batch in _batches.values():
+                if job_id in batch["job_ids"]:
+                    stop_batch(batch["batch_id"])
+                    return _job_view(job)
+            if job["state"] in {"running", "queued"}:
+                job.setdefault("cancel", threading.Event()).set()
+            return _job_view(job)
 
     @application.get("/api/providers")
     def providers() -> list[dict[str, Any]]:
@@ -482,7 +542,7 @@ def create_app(env: Optional[Mapping[str, str]] = None) -> FastAPI:
                 row["similarity_flagged"] = item.get("similarity_flagged", False)
                 row["flagged"] = row["flagged"] or row["similarity_flagged"]
             rows.append(row)
-        return {"batch_id": batch_id, **cohort_statistics(rows)}
+        return scrub({"batch_id": batch_id, **cohort_statistics(rows)})
 
     @application.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> dict[str, Any]:

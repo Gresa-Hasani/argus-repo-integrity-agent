@@ -199,7 +199,8 @@ def test_api_runs_the_real_pipeline_and_serves_validated_reports(api, clean_repo
     from argus.collectors.gitutil import RepoSource
     from argus.collectors.gitutil import clone as real_clone
 
-    client, _ = api
+    client, api_server = api
+    monkeypatch.setattr(api_server, "run_evaluation", lambda url, cfg, progress, cancel: api_server.Evaluation(url, cfg, None, progress).run())
     monkeypatch.setattr(pipeline, "clone", lambda source, dest, timeout=1800: real_clone(RepoSource(str(clean_repo), "local", None, "project", None, clean_repo), dest))
     monkeypatch.setattr(github_mod.collect, "__defaults__", (lambda path, token: [] if "?" in path or path.endswith("/releases") else {"full_name": "owner/project", "visibility": "public", "default_branch": "main"},))
 

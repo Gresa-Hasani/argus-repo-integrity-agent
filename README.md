@@ -470,3 +470,18 @@ Additional limits:
   Their 10% quality tolerance does not certify solver feasibility, normalize arbitrary hardware, search
   current frontier results automatically, or award assignment points. See
   [`docs/cohort-evaluation-spec.md`](docs/cohort-evaluation-spec.md) for implemented scope and pending grading inputs.
+
+### Stopping a live evaluation
+
+Click **Stop evaluation** in the batch panel. ARGUS terminates the active isolated evaluation worker
+(and its Git subprocess group on POSIX), cancels queued repositories, and cleans temporary clones.
+Pairwise comparison also runs in an interruptible worker. The state changes through `stopping` to
+`cancelled`; completed reports are retained, and cancelled work is not presented as a completed report.
+The cancelled batch summary survives backend restarts. API equivalents are
+`POST /api/batches/{batch_id}/stop` and `POST /api/jobs/{job_id}/stop`; stopping a batch member cancels
+its containing batch. Stopping an already finished batch is a no-op.
+
+Statistics now include a full findings breakdown by severity and category for each eligible population.
+Click a severity segment or category bar to inspect finding text, measured basis, model interpretation,
+review status, alternative explanations, and full redacted evidence. These counts describe report
+findings; they are not NP-hard solver-quality or algorithmic-complexity scores.

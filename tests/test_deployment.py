@@ -187,6 +187,7 @@ def test_job_failure_returns_a_fixed_public_message(api, monkeypatch, caplog):
         raise RuntimeError(f"git clone failed in C:\\Users\\svc\\AppData\\Temp\\argus-x with GITHUB_TOKEN=ghp_{'a' * 36} via http://localhost:11434")
 
     monkeypatch.setattr(server.Evaluation, "run", explode)
+    monkeypatch.setattr(server, "run_evaluation", lambda url, cfg, progress, cancel: server.Evaluation(url, cfg, None, progress).run())
     job = wait_for(api, api.post("/api/evaluate", json={"url": "https://github.com/owner/project", "deterministic_only": True}).json()["job_id"])
     body = json.dumps(job)
     assert job["state"] == "failed" and job["error"] == server.PUBLIC_FAILURE
@@ -207,6 +208,8 @@ def test_api_output_contains_no_paths_secrets_or_raw_emails(api, tmp_path, monke
     repo = build_clean(tmp_path / "fixture")
     repo.commit("Add settings", {".gitignore": "__pycache__/\n", ".env": f"DATABRICKS_HOST=https://example.cloud.databricks.com\nDATABRICKS_TOKEN={SECRET}\nAPI_URL=http://localhost:9000/v1\n"})
     fake_github(monkeypatch, repo.path)
+    # Keep fixture network replacements in-process; worker isolation is covered separately.
+    monkeypatch.setattr(server, "run_evaluation", lambda url, cfg, progress, cancel: server.Evaluation(url, cfg, None, progress).run())
     job = wait_for(api, api.post("/api/evaluate", json={"url": "https://github.com/owner/project", "deterministic_only": True}).json()["job_id"])
     assert job["state"] == "done", job
     eid = job["evaluation_id"]
