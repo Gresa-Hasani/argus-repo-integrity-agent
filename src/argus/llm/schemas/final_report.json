@@ -245,6 +245,72 @@
       "title": "CoverageStatus",
       "type": "object"
     },
+    "CriterionScore": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "kind": {
+          "default": "absolute",
+          "title": "Kind",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "weight": {
+          "default": 0.0,
+          "title": "Weight",
+          "type": "number"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "explanation": {
+          "default": "",
+          "title": "Explanation",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "title": "CriterionScore",
+      "type": "object"
+    },
     "DefinitionOfDone": {
       "properties": {
         "satisfied": {
@@ -596,6 +662,374 @@
       "title": "Outcome",
       "type": "string"
     },
+    "PeerComparison": {
+      "properties": {
+        "peer": {
+          "title": "Peer",
+          "type": "string"
+        },
+        "relevance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Relevance",
+          "type": "number"
+        },
+        "peer_criteria": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Peer Criteria",
+          "type": "object"
+        },
+        "criterion_deltas": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Criterion Deltas",
+          "type": "object"
+        },
+        "relative_percentiles": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Relative Percentiles",
+          "type": "object"
+        },
+        "strengths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strengths",
+          "type": "array"
+        },
+        "weaknesses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Weaknesses",
+          "type": "array"
+        },
+        "shared_strengths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Shared Strengths",
+          "type": "array"
+        },
+        "explanation": {
+          "default": "",
+          "title": "Explanation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "peer",
+        "relevance"
+      ],
+      "title": "PeerComparison",
+      "type": "object"
+    },
+    "PeerRelevance": {
+      "properties": {
+        "repository": {
+          "title": "Repository",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "relation": {
+          "default": "SAME_TASK",
+          "title": "Relation",
+          "type": "string"
+        },
+        "relevance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Relevance",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "comparable": {
+          "default": false,
+          "title": "Comparable",
+          "type": "boolean"
+        },
+        "duplicate": {
+          "default": false,
+          "title": "Duplicate",
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "relevance",
+        "confidence"
+      ],
+      "title": "PeerRelevance",
+      "type": "object"
+    },
+    "RepositoryProfile": {
+      "description": "Normalised, deterministic description of what a repository contains and implements.",
+      "properties": {
+        "profile_version": {
+          "default": "1.0",
+          "title": "Profile Version",
+          "type": "string"
+        },
+        "repository": {
+          "title": "Repository",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "task_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Category"
+        },
+        "generated_at": {
+          "title": "Generated At",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "languages": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Languages",
+          "type": "array"
+        },
+        "technologies": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Technologies",
+          "type": "array"
+        },
+        "dependencies": {
+          "additionalProperties": true,
+          "title": "Dependencies",
+          "type": "object"
+        },
+        "structure": {
+          "additionalProperties": true,
+          "title": "Structure",
+          "type": "object"
+        },
+        "architecture": {
+          "additionalProperties": true,
+          "title": "Architecture",
+          "type": "object"
+        },
+        "features": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "task_coverage": {
+          "items": {
+            "$ref": "#/$defs/RequirementAssessment"
+          },
+          "title": "Task Coverage",
+          "type": "array"
+        },
+        "task_coverage_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Coverage Score"
+        },
+        "testing": {
+          "additionalProperties": true,
+          "title": "Testing",
+          "type": "object"
+        },
+        "quality": {
+          "additionalProperties": true,
+          "title": "Quality",
+          "type": "object"
+        },
+        "documentation": {
+          "additionalProperties": true,
+          "title": "Documentation",
+          "type": "object"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "confidence_level": {
+          "default": "LOW",
+          "title": "Confidence Level",
+          "type": "string"
+        },
+        "evidence_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Fingerprint"
+        },
+        "evidence_index": {
+          "additionalProperties": true,
+          "title": "Evidence Index",
+          "type": "object"
+        },
+        "evidence_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Sources",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repository",
+        "generated_at"
+      ],
+      "title": "RepositoryProfile",
+      "type": "object"
+    },
+    "RequirementAssessment": {
+      "description": "A task requirement checked against implementation evidence, never against README prose alone.",
+      "properties": {
+        "requirement_id": {
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "requirement": {
+          "title": "Requirement",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RequirementStatus"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "matched_terms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Terms",
+          "type": "array"
+        },
+        "explanation": {
+          "default": "",
+          "title": "Explanation",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "requirement",
+        "status",
+        "score",
+        "confidence"
+      ],
+      "title": "RequirementAssessment",
+      "type": "object"
+    },
+    "RequirementStatus": {
+      "enum": [
+        "COVERED",
+        "PARTIAL",
+        "MISSING",
+        "UNVERIFIED"
+      ],
+      "title": "RequirementStatus",
+      "type": "string"
+    },
     "Severity": {
       "enum": [
         "INFO",
@@ -606,6 +1040,232 @@
       ],
       "title": "Severity",
       "type": "string"
+    },
+    "TaskAssignment": {
+      "description": "How a repository was associated with a task, and how strongly that association is supported.",
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "category": {
+          "default": "",
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requirements",
+          "type": "array"
+        },
+        "relation": {
+          "default": "EXPLICIT",
+          "title": "Relation",
+          "type": "string"
+        },
+        "relevance": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Relevance",
+          "type": "number"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "method": {
+          "default": "configured",
+          "title": "Method",
+          "type": "string"
+        },
+        "explanation": {
+          "default": "",
+          "title": "Explanation",
+          "type": "string"
+        },
+        "corroboration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Corroboration"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task_id",
+        "relevance",
+        "confidence"
+      ],
+      "title": "TaskAssignment",
+      "type": "object"
+    },
+    "TaskEvaluationResult": {
+      "properties": {
+        "repository": {
+          "title": "Repository",
+          "type": "string"
+        },
+        "task": {
+          "$ref": "#/$defs/TaskAssignment"
+        },
+        "profile": {
+          "$ref": "#/$defs/RepositoryProfile"
+        },
+        "comparable_repositories": {
+          "items": {
+            "$ref": "#/$defs/PeerRelevance"
+          },
+          "title": "Comparable Repositories",
+          "type": "array"
+        },
+        "excluded_repositories": {
+          "items": {
+            "$ref": "#/$defs/PeerRelevance"
+          },
+          "title": "Excluded Repositories",
+          "type": "array"
+        },
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/CriterionScore"
+          },
+          "title": "Criteria",
+          "type": "array"
+        },
+        "peer_comparisons": {
+          "items": {
+            "$ref": "#/$defs/PeerComparison"
+          },
+          "title": "Peer Comparisons",
+          "type": "array"
+        },
+        "missing_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Requirements",
+          "type": "array"
+        },
+        "partial_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Partial Requirements",
+          "type": "array"
+        },
+        "strengths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strengths",
+          "type": "array"
+        },
+        "weaknesses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Weaknesses",
+          "type": "array"
+        },
+        "absolute_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Absolute Score"
+        },
+        "relative_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Relative Score"
+        },
+        "final_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Final Score"
+        },
+        "score_explanation": {
+          "default": "",
+          "title": "Score Explanation",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "confidence_level": {
+          "default": "LOW",
+          "title": "Confidence Level",
+          "type": "string"
+        },
+        "status": {
+          "default": "ABSOLUTE_ONLY",
+          "title": "Status",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repository",
+        "task",
+        "profile"
+      ],
+      "title": "TaskEvaluationResult",
+      "type": "object"
     }
   },
   "properties": {
@@ -726,6 +1386,40 @@
     },
     "definition_of_done": {
       "$ref": "#/$defs/DefinitionOfDone"
+    },
+    "repository_profile": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RepositoryProfile"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "task_evaluation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TaskEvaluationResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "profiling_error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Profiling Error"
     }
   },
   "required": [

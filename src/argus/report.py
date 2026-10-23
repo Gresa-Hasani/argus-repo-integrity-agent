@@ -71,6 +71,146 @@ def _blocks(findings: list[Finding], empty: str = "None.") -> str:
     return "\n".join(_finding_block(f) for f in ordered) if ordered else empty + "\n"
 
 
+def _profile_section(ev: FinalEvaluation) -> list[str]:
+    """Section 26: profile, task identity, peer context and explainable task scores."""
+    out: list[str] = []
+    add = out.append
+    add("## 26. Repository Profile and Task-Based Cross-Validation\n")
+    add("_The profile is built statically from tracked files. Repository code is not executed, and README statements are not accepted as implementation evidence._\n")
+    if ev.profiling_error:
+        add(f"**Profiling limitation:** {ev.profiling_error}\n")
+    profile = ev.repository_profile
+    if profile is None:
+        add("_No repository profile was produced for this evaluation._\n")
+        return out
+
+    def short(value: Any, limit: int = 180) -> str:
+        text = str(value or "").replace("\n", " ").strip()
+        return text[: limit - 3] + "..." if len(text) > limit else text
+
+    structure = profile.structure or {}
+    testing = profile.testing or {}
+    quality = profile.quality or {}
+    documentation = profile.documentation or {}
+    architecture = profile.architecture or {}
+    dependencies = profile.dependencies or {}
+    languages = ", ".join(
+        f"{row.get('language')} ({row.get('share_of_code', 0):.0%})" for row in (profile.languages or [])[:8]
+    ) or "none detected"
+    testing_score = f"{float(testing['score']):.0%}" if testing.get("score") is not None else "not measurable"
+    quality_score = f"{float(quality['score']):.0%}" if quality.get("score") is not None else "not measurable"
+    add("**Repository profile**\n")
+    add(table(["Field", "Value"], [
+        ("Repository", profile.repository),
+        ("Profile version / generated", f"{profile.profile_version} / {profile.generated_at}"),
+        ("Task identifier", profile.task_id or "not assigned"),
+        ("Profile confidence", f"{profile.confidence:.0%} ({profile.confidence_level})"),
+        ("Languages", languages),
+        ("Dependency ecosystems", ", ".join(dependencies.get("ecosystems") or []) or "none detected"),
+        ("Tracked / source / test files", f"{structure.get('tracked_files', 0)} / {structure.get('source_files', 0)} / {structure.get('test_files', 0)}"),
+        ("Config / documentation / CI files", f"{structure.get('config_files', 0)} / {structure.get('documentation_files', 0)} / {structure.get('ci_files', 0)}"),
+        ("Architecture patterns", ", ".join(architecture.get("patterns") or []) or "none confidently inferred"),
+        ("Entry points", ", ".join(architecture.get("entry_points") or []) or "none detected"),
+        ("Testing", f"{testing.get('test_files', 0)} test file(s), {testing.get('test_cases_estimate', 0)} static test case(s), score {testing_score}"),
+        ("Quality", f"score {quality_score}; {len(quality.get('components') or [])} indicator(s)"),
+        ("Documentation", f"README {'present' if documentation.get('readme_present') else 'missing'}; {len(documentation.get('documentation_files') or [])} documentation file(s); licence {'present' if documentation.get('license_files') else 'not detected'}"),
+        ("Evidence fingerprint", profile.evidence_fingerprint or "not available (no scanned source files)"),
+    ]))
+    if profile.technologies:
+        add(table(["Technology", "Category", "Evidence", "Confidence"], [
+            (item.get("name"), item.get("category"), short(", ".join(item.get("evidence") or []), 100), f"{float(item.get('confidence') or 0):.0%}")
+            for item in profile.technologies[:15]
+        ]))
+    runtime = sorted((dependencies.get("runtime") or {}).items())
+    development = sorted((dependencies.get("development") or {}).items())
+    add(f"Dependencies: **{len(runtime)} runtime**, **{len(development)} development**, manifests: {', '.join(dependencies.get('manifests') or []) or 'none detected'}. "
+        "Versions are declared versions; dependency resolution and vulnerability assessment were not performed.\n")
+    if runtime or development:
+        add(table(["Dependency", "Scope", "Declared version", "Manifest"], [
+            (name, scope, (spec or {}).get("version", "unspecified"), (spec or {}).get("manifest", ""))
+            for scope, rows in (("runtime", runtime), ("development", development)) for name, spec in rows[:15]
+        ]))
+    if profile.features:
+        add(table(["Feature / module", "Kind", "Evidence", "Description"], [
+            (item.get("name"), item.get("kind"), short(", ".join(item.get("evidence") or []), 80), short(item.get("description"), 130))
+            for item in profile.features[:15]
+        ]))
+
+    task = ev.task_evaluation
+    if task is None:
+        if not profile.task_coverage:
+            add("**Task-based evaluation:** no task evaluation was produced (no task was configured, or the task layer failed; see the profiling limitation above). The profile above is descriptive and does not affect the integrity completion status.\n")
+        else:
+            add("**Task-based evaluation:** requirement coverage was assessed, but no comparative evaluation object was retained.\n")
+    else:
+        assignment = task.task
+        add("**Task assignment and requirement coverage**\n")
+        add(table(["Field", "Value"], [
+            ("Task", f"{assignment.task_id}" + (f" — {assignment.title}" if assignment.title else "")),
+            ("Category", assignment.category or "not specified"),
+            ("Relation", assignment.relation),
+            ("Task relevance / confidence", f"{assignment.relevance:.0%} / {assignment.confidence:.0%}"),
+            ("Assignment method", assignment.method),
+            ("Observed-content corroboration", f"{assignment.corroboration:.0%}" if assignment.corroboration is not None else "not applicable"),
+            ("Task description", short(assignment.description, 320)),
+        ]))
+        add(f"{assignment.explanation}\n")
+        if assignment.limitations:
+            add(bullets(assignment.limitations))
+        if profile.task_coverage:
+            add(table(["Requirement", "Status", "Score", "Confidence", "Evidence", "Explanation"], [
+                (f"{item.requirement_id}: {short(item.requirement, 120)}", item.status.value, f"{item.score:.0%}", f"{item.confidence:.0%}",
+                 short(", ".join(item.evidence), 90), short(item.explanation, 160))
+                for item in profile.task_coverage
+            ]))
+            add(f"Requirement coverage mean (assessed requirements only): **{profile.task_coverage_score:.0%}**.\n" if profile.task_coverage_score is not None else "Requirement coverage mean: **not measurable**.\n")
+        else:
+            add("_The task defines no explicit requirements; requirement fulfilment is not scored._\n")
+        add(table(["Score layer", "Value"], [
+            ("Absolute task-based score", f"{task.absolute_score:.1f}/100" if task.absolute_score is not None else "not measurable"),
+            ("Relative peer context", f"{task.relative_score:.1f}/100" if task.relative_score is not None else "not computed"),
+            ("Final score", f"{task.final_score:.1f}/100" if task.final_score is not None else "not measurable"),
+            ("Status", task.status),
+            ("Confidence", f"{task.confidence:.0%} ({task.confidence_level})"),
+        ]))
+        add(f"{task.score_explanation}\n")
+        if task.criteria:
+            add(table(["Criterion", "Score", "Weight", "Confidence", "Explanation"], [
+                (item.label, f"{item.score:.1f}/100" if item.score is not None else "not measurable", f"{item.weight:g}",
+                 f"{item.confidence:.0%}", short(item.explanation, 220))
+                for item in task.criteria
+            ]))
+        if task.comparable_repositories:
+            add("**Comparable repositories (task-relevant peers)**\n")
+            add(table(["Repository", "Task", "Relation", "Relevance", "Confidence", "Reason"], [
+                (row.repository, row.task_id or "n/a", row.relation, f"{row.relevance:.0%}", f"{row.confidence:.0%}", short(row.reason, 180))
+                for row in task.comparable_repositories
+            ]))
+        else:
+            add("**Comparable repositories:** none. Relative peer scoring was not performed.\n")
+        if task.excluded_repositories:
+            add(table(["Excluded repository", "Task", "Relation", "Relevance", "Duplicate", "Reason"], [
+                (row.repository, row.task_id or "n/a", row.relation, f"{row.relevance:.0%}", "yes" if row.duplicate else "no", short(row.reason, 180))
+                for row in task.excluded_repositories[:25]
+            ]))
+        if task.peer_comparisons:
+            add(table(["Peer", "Relevance", "Criterion deltas", "Shared strengths", "Differences"], [
+                (row.peer, f"{row.relevance:.0%}",
+                 short("; ".join(f"{key}={value:+.1f}" for key, value in row.criterion_deltas.items()), 180),
+                 short("; ".join(row.shared_strengths), 180), short(row.explanation, 220))
+                for row in task.peer_comparisons
+            ]))
+        for label, items in (("Missing requirements", task.missing_requirements), ("Partial requirements", task.partial_requirements),
+                             ("Strengths", task.strengths), ("Weaknesses", task.weaknesses), ("Limitations", task.limitations)):
+            add(f"**{label}**\n")
+            add(bullets(items))
+    if profile.limitations:
+        add("**Profile limitations**\n")
+        add(bullets(profile.limitations))
+    add(f"_Evidence sources: {', '.join(profile.evidence_sources) or 'none recorded'}. Task analysis is separate from the integrity findings and cannot change the evaluation completion status._\n")
+    return out
+
+
 def render_markdown(ev: FinalEvaluation) -> str:
     m = ev.deterministic_metrics
     repo = ev.repository
@@ -318,6 +458,7 @@ def render_markdown(ev: FinalEvaluation) -> str:
 
     add("## 25. Final Status\n")
     add("```text\n" + final_block(ev) + "\n```\n")
+    out.extend(_profile_section(ev))
     return "\n".join(out)
 
 

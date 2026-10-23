@@ -21,3 +21,49 @@ require_similarity = false
 # deadline = "2026-10-01T18:00:00+00:00"
 late_window_hours = 2.0
 # compare = ["https://github.com/owner/reference-repo"]
+
+# --- Optional: task-based profiling and peer comparison --------------------------------------
+# A repository profile is built for every successful evaluation. Task scoring runs only when a
+# task is configured here, via ARGUS_TASK_* / ARGUS_SCORING_* / ARGUS_PEER_* variables, or by CLI
+# flags. Configure one task for the whole cohort:
+#
+# [task]
+# id = "inventory"
+# title = "Inventory service"
+# category = "backend"
+# description = "Build an inventory REST API with stock reservation and an audit log."
+# requirements = ["stock reservation endpoint", "audit log"]
+# relevance_threshold = 0.62
+# similarity_threshold = 0.70
+#
+# [task.assignments]
+# "owner/repository" = "inventory"
+#
+# For several tasks, replace the single [task] block with an array of definitions and assign each
+# repository explicitly. With multiple tasks, repositories without an assignment identity are
+# inferred from observed content; ambiguous profiles are excluded from peer scoring.
+#
+# [[task.definitions]]
+# id = "inventory"
+# description = "Build an inventory REST API with stock reservation."
+# requirements = ["stock reservation endpoint"]
+#
+# [[task.definitions]]
+# id = "vision"
+# description = "Train an image segmentation model on labelled photographs."
+# requirements = ["image segmentation"]
+#
+# [task.assignments]
+# "owner/inventory-service" = "inventory"
+# "owner/vision-model" = "vision"
+#
+# [scoring]
+# peer_context_weight = 0.15   # 0 disables peer influence; maximum 0.5
+# peer_minimum = 2             # fewer comparable peers -> absolute score only
+#
+# [scoring.weights]
+# task_requirement_fulfillment = 0.35
+# functional_completeness = 0.20
+# code_quality_maintainability = 0.15
+# testing_quality = 0.15
+# architecture_implementation = 0.15

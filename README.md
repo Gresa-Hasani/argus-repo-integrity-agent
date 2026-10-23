@@ -2,7 +2,9 @@
 
 ARGUS evaluates the engineering evidence in Git repositories: history, contributions, source provenance,
 repository hygiene, README claims, and CI configuration. Its web interface evaluates **multiple public
-GitHub repositories**, compares every pair, and graphs each repository's measured results.
+GitHub repositories**, compares every pair, and graphs each repository's measured results. When a task is
+supplied, ARGUS also builds a source-based repository profile and compares the repository only with peers
+that implement the same task.
 
 **Measure first, reason second.** Git and static collectors produce the evidence. Ollama, OpenAI, or
 Claude interprets bounded evidence packets. Deterministic policy validates citations, decides whether a
@@ -18,6 +20,7 @@ correctness, and academic scores require their own verified rubric and benchmark
 - [Choose an AI provider](#choose-an-ai-provider)
 - [Evaluate repositories in the UI](#evaluate-repositories-in-the-ui)
 - [Statistics and copied-code detection](#statistics-and-copied-code-detection)
+- [Task profiling and peer comparison](#task-profiling-and-peer-comparison)
 - [Complete an evaluation](#complete-an-evaluation)
 - [CLI](#cli)
 - [Configuration](#configuration)
@@ -207,6 +210,41 @@ Their corresponding `sessions.py` files contain 920 and 2,247 lines with differe
 modified derivative, not an identical-file fixture. It is a legitimate reuse example, not a misconduct claim.
 The manifest records modes, commit hashes, changed-file evidence, and reproducible API input.
 
+## Task profiling and peer comparison
+
+Every successful evaluation also produces a static **repository profile** from tracked files:
+languages, dependencies, structure, features, routes, architecture, tests, quality indicators,
+documentation, and an evidence fingerprint. Repository code is never executed. A README can describe a
+repository, but README statements are never accepted as implementation evidence.
+
+When a task is configured, ARGUS evaluates explicit requirements against source evidence and assigns
+the repository to that task. A caller-supplied assignment is authoritative; otherwise task identity is
+inferred from the description, requirements, features, symbols, paths, dependencies, and documentation
+headings. Similar task definitions are merged into groups, and repositories are compared only with
+peers in the same group whose task identity is established. Unrelated, uncertain, and duplicate
+profiles are excluded with a reason.
+
+Scoring has two visibly separate layers. The **absolute** layer measures requirement fulfilment,
+functional completeness, code quality, testing, and architecture using configurable weights. The
+**relative** layer is a leave-one-out percentile over task-relevant peers. The final score keeps the
+absolute layer primary:
+
+```text
+final = absolute × (1 − peer_context_weight) + relative × peer_context_weight
+```
+
+The peer weight defaults to 0.15 and is capped at 0.5. Fewer than `peer_minimum` peers (default 2)
+does not lower the score; the result stays `ABSOLUTE_ONLY`, `INSUFFICIENT_PEERS`, or
+`INSUFFICIENT_DATA` and the explanation says why. This is repository-to-repository comparison, not
+machine-learning cross-validation: no model is trained and there are no train/validation folds.
+
+Add a task with `--task` or a task file for the CLI, `[task]`/`[scoring]` in `argus.toml`, or the
+optional `task` object on `/api/batches` and `/api/evaluate`. The profile and task evaluation appear in
+report section 26 and in the optional `repository_profile`/`task_evaluation` JSON fields. Task analysis
+is auxiliary: a profile failure is recorded without changing the integrity completion status. See
+[`docs/task-profiling-and-cross-validation.md`](docs/task-profiling-and-cross-validation.md) for the
+criteria, statuses, configuration, API payload, edge cases, and limitations.
+
 ## Complete an evaluation
 
 A batch reaching `done` means its queue and comparisons finished. It does **not** mean every repository
@@ -264,6 +302,13 @@ argus evaluate https://github.com/owner/repository
 # Compare local or public repositories, with a mandatory provenance check
 argus evaluate ./target --compare ./reference --require-similarity
 
+# Profile the repository against a task and compare it with task-relevant peers
+argus evaluate ./target --task 'Build an inventory API with stock reservation' \
+  --task-id inventory --task-requirement 'stock reservation endpoint'
+
+# Load several task definitions and assignments from JSON or TOML
+argus evaluate ./target --task-file tasks.json
+
 # A deadline must include the intended timezone
 argus evaluate ./target --deadline '2026-10-01T18:00:00+02:00'
 
@@ -273,9 +318,13 @@ argus evaluate ./target --no-llm
 
 Additional options: `--provider`, `--model`, `--fallback-model`, `--config`, `--backend ollama|openai`
 (the latter selects the local runtime protocol), `--base-url`, `--similarity-threshold`, `--out`,
-`--no-github-api`, `--keep-clone`, `--quiet`. Run `argus evaluate --help` for the full interface.
-Passing multiple targets to the CLI evaluates them sequentially; automatic all-pairs comparison and
-batch statistics are provided by the batch API/UI.
+`--no-github-api`, `--keep-clone`, `--quiet`. Task options are `--task`, `--task-file`, `--task-id`,
+`--task-title`, `--task-category`, repeatable `--task-requirement` and `--task-assignment REPO=TASK`,
+`--task-relevance-threshold`, `--task-similarity-threshold`, repeatable `--scoring-weight
+CRITERION=WEIGHT`, `--peer-context-weight`, and `--peer-minimum`. Run `argus evaluate --help` for the
+full interface. Passing multiple targets to the CLI evaluates them sequentially and, when a task is
+configured, adds a cohort task summary and peer context to each report; automatic all-pairs comparison
+and batch statistics are provided by the batch API/UI.
 
 ## Configuration
 
@@ -306,6 +355,26 @@ appropriate process launcher. Restart the backend after changing its environment
 | `ARGUS_ALLOWED_ORIGINS` | Additional exact browser origins, comma-separated; no wildcards |
 | `HOST`, `PORT` | Bind address for `python -m argus.server`: `127.0.0.1`, `8000` |
 | `NEXT_PUBLIC_API_URL` | Frontend backend URL; unset in a production build selects the static demo |
+
+Optional task profiling and peer scoring:
+
+| Variable | Purpose / default |
+|---|---|
+| `ARGUS_TASK_ID`, `ARGUS_TASK_TITLE`, `ARGUS_TASK_CATEGORY` | Identity for a single configured task |
+| `ARGUS_TASK_DESCRIPTION` | Single-task description; enables task scoring |
+| `ARGUS_TASK_REQUIREMENTS` | JSON array of requirement strings |
+| `ARGUS_TASK_DEFINITIONS` | JSON array of task definitions for multiple tasks |
+| `ARGUS_TASK_ASSIGNMENTS` | JSON object mapping `owner/repository` to a task id |
+| `ARGUS_TASK_RELEVANCE_THRESHOLD` | Minimum inferred task affinity: `0.62` |
+| `ARGUS_TASK_SIMILARITY_THRESHOLD` | Task-equivalence threshold: `0.70` |
+| `ARGUS_SCORING_WEIGHTS` | JSON object of absolute criterion weights |
+| `ARGUS_PEER_CONTEXT_WEIGHT` | Peer share of final score, `0`–`0.5`: `0.15` |
+| `ARGUS_PEER_MINIMUM` | Minimum comparable peers before relative scoring: `2` |
+
+The same settings can be expressed as `[task]`, `[task.assignments]`, and `[scoring]` tables in
+`argus.toml`; see [`argus.example.toml`](argus.example.toml). Task scoring is optional and does not
+change integrity completion status. Full criteria, statuses, and examples are in
+[`docs/task-profiling-and-cross-validation.md`](docs/task-profiling-and-cross-validation.md).
 
 The **Server default** UI choice uses the normal configuration chain. Explicit hosted UI choices use
 provider-specific defaults and `ARGUS_OPENAI_*` / `ARGUS_ANTHROPIC_*` settings. When switching the server
@@ -342,6 +411,33 @@ Use the returned `batch_id` to poll. Explicit provider choices are `configured`,
 The legacy endpoint accepts `url` and `deterministic_only` and uses the server default provider.
 Invalid input returns 422; an occupied queue returns 429 with `Retry-After`; unavailable GitHub search
 returns 503. Search failure does not prevent evaluation of pasted URLs.
+
+Add an optional `task` object to `/api/batches` or `/api/evaluate` to enable task-based profiling,
+requirement coverage, and peer comparison:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/batches \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "urls": ["https://github.com/owner/inventory-service", "https://github.com/owner/other-inventory"],
+    "provider": "configured",
+    "deterministic_only": false,
+    "task": {
+      "id": "inventory",
+      "description": "Build an inventory REST API with stock reservation.",
+      "requirements": ["stock reservation endpoint", "audit log"],
+      "assignments": {"owner/inventory-service": "inventory"},
+      "peer_minimum": 2,
+      "peer_context_weight": 0.15
+    }
+  }'
+```
+
+Use `definitions` (or `tasks`) with a list of task objects for multiple tasks. The same object accepts
+`relevance_threshold`, `similarity_threshold`, and `scoring_weights`. The completed batch exposes
+`task_cross_validation`; an auxiliary task failure sets `task_cross_validation_error` without discarding
+individual reports. See
+[`docs/task-profiling-and-cross-validation.md`](docs/task-profiling-and-cross-validation.md).
 
 ## Reproducible tests
 
@@ -465,6 +561,14 @@ Additional limits:
   not a complete scan of all historical secret content.
 - Meaningful-source and generated/vendor classification use path heuristics. README checks use a fixed
   technology vocabulary. Neither establishes full requirement compliance.
+- Task profiles are static and lexical/structural. They do not execute code or tests, and matching can
+  miss renamed features or unusual terminology. `MISSING` means the current profile did not support the
+  requirement, not proof that the feature is absent.
+- Task requirements and relative peer percentiles are only available when a task is configured.
+  Inferred task identity below the threshold is excluded from peer scoring; peer percentiles are
+  descriptive for the supplied cohort, not statistical significance tests. Duplicate profiles are
+  excluded from peer statistics. See
+  [`docs/task-profiling-and-cross-validation.md`](docs/task-profiling-and-cross-validation.md).
 - Optional GitHub metadata may be unavailable due to access/rate limits. scc fallback has no complexity metric.
 - Benchmark helpers require matching instances/objectives and independent feasibility evidence.
   Their 10% quality tolerance does not certify solver feasibility, normalize arbitrary hardware, search

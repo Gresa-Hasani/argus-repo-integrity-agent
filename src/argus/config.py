@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -13,6 +14,67 @@ def _bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _string_list(value: Any) -> list[str]:
+    """Accept a TOML/JSON list, a JSON string, or newline/semicolon separated text."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                value = json.loads(text)
+            except ValueError:
+                value = [part for part in text.replace(";", "\n").splitlines()]
+        else:
+            value = [part for part in text.replace(";", "\n").splitlines()]
+    if isinstance(value, (tuple, set)):
+        value = list(value)
+    if not isinstance(value, list):
+        raise ValueError("expected a list of strings")
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _mapping_list(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise ValueError("task definitions must be a TOML/JSON list of objects") from exc
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError("task definitions must be a list of objects")
+    return [dict(item) for item in value]
+
+
+def _string_dict(value: Any) -> dict[str, str]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise ValueError("expected a TOML/JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("expected an object mapping repository keys to values")
+    return {str(key): str(item) for key, item in value.items() if str(item).strip()}
+
+
+def _float_dict(value: Any) -> dict[str, float]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise ValueError("scoring weights must be a TOML/JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("scoring weights must be an object")
+    return {str(key): float(item) for key, item in value.items()}
 
 
 @dataclass
@@ -40,6 +102,19 @@ class Config:
     late_window_hours: float = 2.0
     large_commit_files: int = 100
     large_commit_additions: int = 3000
+    # Task profiling and task-based cross-validation
+    task_id: str = ""
+    task_title: str = ""
+    task_category: str = ""
+    task_description: str = ""
+    task_requirements: list[str] = field(default_factory=list)
+    task_definitions: list[dict[str, Any]] = field(default_factory=list)
+    task_assignments: dict[str, str] = field(default_factory=dict)
+    task_relevance_threshold: float = 0.62
+    task_similarity_threshold: float = 0.70
+    scoring_weights: dict[str, float] = field(default_factory=dict)
+    peer_context_weight: float = 0.15
+    peer_minimum: int = 2
     # Tooling / IO
     scc_path: Optional[str] = None
     out_dir: str = "argus-reports"
@@ -76,6 +151,22 @@ class Config:
             "compare": list(self.compare),
             "deadline": self.deadline,
             "late_window_hours": self.late_window_hours,
+            "task": {
+                "id": self.task_id,
+                "title": self.task_title,
+                "category": self.task_category,
+                "description": self.task_description,
+                "requirements": list(self.task_requirements),
+                "definitions": [dict(item) for item in self.task_definitions],
+                "assignments": dict(self.task_assignments),
+                "relevance_threshold": self.task_relevance_threshold,
+                "similarity_threshold": self.task_similarity_threshold,
+            },
+            "scoring": {
+                "weights": dict(self.scoring_weights),
+                "peer_context_weight": self.peer_context_weight,
+                "peer_minimum": self.peer_minimum,
+            },
         }
 
 
@@ -98,6 +189,18 @@ _ENV = {
     "ARGUS_SCC_PATH": ("scc_path", str),
     "ARGUS_SIMILARITY_THRESHOLD": ("similarity_threshold", float),
     "ARGUS_DEADLINE": ("deadline", str),
+    "ARGUS_TASK_ID": ("task_id", str),
+    "ARGUS_TASK_TITLE": ("task_title", str),
+    "ARGUS_TASK_CATEGORY": ("task_category", str),
+    "ARGUS_TASK_DESCRIPTION": ("task_description", str),
+    "ARGUS_TASK_REQUIREMENTS": ("task_requirements", _string_list),
+    "ARGUS_TASK_DEFINITIONS": ("task_definitions", _mapping_list),
+    "ARGUS_TASK_ASSIGNMENTS": ("task_assignments", _string_dict),
+    "ARGUS_TASK_RELEVANCE_THRESHOLD": ("task_relevance_threshold", float),
+    "ARGUS_TASK_SIMILARITY_THRESHOLD": ("task_similarity_threshold", float),
+    "ARGUS_SCORING_WEIGHTS": ("scoring_weights", _float_dict),
+    "ARGUS_PEER_CONTEXT_WEIGHT": ("peer_context_weight", float),
+    "ARGUS_PEER_MINIMUM": ("peer_minimum", int),
 }
 
 _FILE_LLM = {
@@ -162,11 +265,50 @@ def load_config(
         for key, value in data.get("evaluation", {}).items():
             if key in _FILE_EVAL:
                 setattr(cfg, key, value)
+        task = data.get("task", {})
+        if not isinstance(task, dict):
+            raise ValueError("[task] must be a TOML table")
+        if "id" in task:
+            cfg.task_id = str(task["id"])
+        if "title" in task:
+            cfg.task_title = str(task["title"])
+        if "category" in task:
+            cfg.task_category = str(task["category"])
+        if "description" in task:
+            cfg.task_description = str(task["description"])
+        if "requirements" in task:
+            cfg.task_requirements = _string_list(task["requirements"])
+        if "definitions" in task:
+            cfg.task_definitions = _mapping_list(task["definitions"])
+        if "assignments" in task:
+            cfg.task_assignments = _string_dict(task["assignments"])
+        if "relevance_threshold" in task:
+            cfg.task_relevance_threshold = float(task["relevance_threshold"])
+        if "similarity_threshold" in task:
+            cfg.task_similarity_threshold = float(task["similarity_threshold"])
+        scoring = data.get("scoring", {})
+        if not isinstance(scoring, dict):
+            raise ValueError("[scoring] must be a TOML table")
+        weights = scoring.get("weights", scoring.get("criteria", {}))
+        if weights:
+            cfg.scoring_weights = _float_dict(weights)
+        if "peer_context_weight" in scoring:
+            cfg.peer_context_weight = float(scoring["peer_context_weight"])
+        if "peer_minimum" in scoring:
+            cfg.peer_minimum = int(scoring["peer_minimum"])
+        if "task_relevance_threshold" in scoring:
+            cfg.task_relevance_threshold = float(scoring["task_relevance_threshold"])
+        if "task_similarity_threshold" in scoring:
+            cfg.task_similarity_threshold = float(scoring["task_similarity_threshold"])
 
     _provider_defaults(cfg, env.get("ARGUS_LLM_PROVIDER", cfg.llm_provider))
     for name, (attr, cast) in _ENV.items():
         if env.get(name):
-            setattr(cfg, attr, cast(env[name]))
+            value = cast(env[name])
+            if attr in {"task_assignments", "scoring_weights"} and isinstance(getattr(cfg, attr, None), dict):
+                setattr(cfg, attr, {**getattr(cfg, attr), **value})
+            else:
+                setattr(cfg, attr, value)
     if env.get("ARGUS_LLM_MODEL_TAG"):
         cfg.llm_model_tags[cfg.llm_model] = env["ARGUS_LLM_MODEL_TAG"]
     if env.get("ARGUS_LLM_FALLBACK_MODEL_TAG"):
@@ -174,6 +316,40 @@ def load_config(
 
     _provider_defaults(cfg, (overrides or {}).get("llm_provider") or cfg.llm_provider)
     for key, value in (overrides or {}).items():
-        if value is not None:
+        if value is None:
+            continue
+        if key in {"task_assignments", "scoring_weights"} and isinstance(value, dict):
+            # CLI/env additions extend file configuration instead of silently replacing it.
+            setattr(cfg, key, {**getattr(cfg, key, {}), **value})
+        else:
             setattr(cfg, key, value)
+    _normalize_task_config(cfg)
     return cfg
+
+
+def _normalize_task_config(cfg: Config) -> None:
+    """Normalise and bounds-check task/scoring configuration after all layers are applied."""
+    cfg.task_requirements = _string_list(cfg.task_requirements)
+    cfg.task_definitions = _mapping_list(cfg.task_definitions)
+    for definition in cfg.task_definitions:
+        if "requirements" in definition:
+            definition["requirements"] = _string_list(definition["requirements"])
+        if "aliases" in definition:
+            definition["aliases"] = _string_list(definition["aliases"])
+    cfg.task_assignments = _string_dict(cfg.task_assignments)
+    cfg.scoring_weights = _float_dict(cfg.scoring_weights)
+    if not 0.0 <= float(cfg.task_relevance_threshold) <= 1.0:
+        raise ValueError("task relevance threshold must be between 0 and 1")
+    if not 0.0 <= float(cfg.task_similarity_threshold) <= 1.0:
+        raise ValueError("task similarity threshold must be between 0 and 1")
+    if not 0.0 <= float(cfg.peer_context_weight) <= 0.5:
+        raise ValueError("peer context weight must be between 0 and 0.5")
+    cfg.task_relevance_threshold = float(cfg.task_relevance_threshold)
+    cfg.task_similarity_threshold = float(cfg.task_similarity_threshold)
+    cfg.peer_context_weight = float(cfg.peer_context_weight)
+    if isinstance(cfg.peer_minimum, bool) or int(cfg.peer_minimum) < 0:
+        raise ValueError("peer minimum must be a non-negative integer")
+    cfg.peer_minimum = int(cfg.peer_minimum)
+    for key, value in cfg.scoring_weights.items():
+        if value < 0:
+            raise ValueError(f"scoring weight {key} must be non-negative")

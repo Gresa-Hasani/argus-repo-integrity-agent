@@ -47,11 +47,16 @@ from argus.models import (
     NarrativeResult,
     Observation,
     Outcome,
+    RepositoryProfile,
     Severity,
+    TaskEvaluationResult,
     confidence_level,
 )
 from argus.policy import assess_candidate, deterministic_summary, numbers_in, outcome_for, reason_codes, repository_observations, sanitize_advisory, summary_problems
+from argus.profiling import RepositoryProfiler
 from argus.status import MODULES, decide, is_mandatory, open_findings
+from argus.task_validation import ScoringConfig, cross_validate_tasks
+from argus.tasks import TaskCatalog
 
 Progress = Callable[[str], None]
 
@@ -111,6 +116,9 @@ class Evaluation:
         self.evaluation_id = f"argus-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         self.timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.repo: Optional[Path] = None
+        self.profile: Optional[RepositoryProfile] = None
+        self.task_evaluation: Optional[TaskEvaluationResult] = None
+        self.profiling_error: Optional[str] = None
         self.repository: dict[str, Any] = {
             "input": self.source.raw, "original_url": self.source.raw, "normalized_url": self.source.url, "kind": self.source.kind, "url": self.source.url, "owner": self.source.owner,
             "name": self.source.name, "default_branch": None, "evaluated_head": None, "evaluation_timestamp": self.timestamp,
@@ -205,6 +213,7 @@ class Evaluation:
             return
         self._collect_optional(work_root)
         self._deterministic_findings()
+        self._profile_repository()
 
         self.progress("[3/4] Reasoning over evidence packets")
         self._reason()
@@ -336,6 +345,45 @@ class Evaluation:
         except Exception as exc:
             self.set("cross_agent_handoffs", ModuleStatus.UNVERIFIABLE, str(exc))
         self.progress(f"  - evidence store: {len(store.all())} items, {len(store.anomalies())} anomaly pattern(s)")
+
+    def _profile_repository(self) -> None:
+        """Build a static repository profile and, when configured, an absolute task evaluation."""
+        if self.repo is None:
+            return
+        try:
+            profile = RepositoryProfiler(self.cfg).build(
+                self.repo,
+                repository=self.repository,
+                tracked=self.tracked,
+                scc=self.metrics.get("scc"),
+                hygiene=self.metrics.get("hygiene"),
+                readme=self.metrics.get("readme"),
+                ci=self.metrics.get("ci"),
+                commits=self.metrics.get("commits"),
+            )
+        except Exception as exc:
+            self.profiling_error = f"repository profile unavailable: {type(exc).__name__}: {exc}"[:800]
+            self.progress(f"  ! {self.profiling_error}")
+            return
+        self.profile = profile
+        try:
+            catalog = TaskCatalog.from_config(self.cfg)
+            if not catalog.configured:
+                return
+            scoring = ScoringConfig.from_config(self.cfg)
+            validation = cross_validate_tasks(
+                [profile], catalog, scoring=scoring,
+                relevance_threshold=self.cfg.task_relevance_threshold,
+                task_similarity_threshold=self.cfg.task_similarity_threshold,
+            )
+            if validation.evaluations:
+                self.task_evaluation = validation.evaluations[0]
+                self.profile = self.task_evaluation.profile
+            if validation.limitations:
+                self.progress("  - task validation: " + "; ".join(validation.limitations[:3]))
+        except Exception as exc:
+            self.profiling_error = f"task evaluation unavailable: {type(exc).__name__}: {exc}"[:800]
+            self.progress(f"  ! {self.profiling_error}")
 
     def _similarity(self, work_root: Path) -> None:
         cfg, store = self.cfg, self.store
@@ -813,6 +861,7 @@ class Evaluation:
             handoffs=self.handoffs, manual_review={"required": bool(manual), "requirements": [r.model_dump(mode="json") for r in manual]},
             unverifiable_items=self.unverifiable, errors=self.errors, executive_summary=self.executive_summary,
             completion_status=status, definition_of_done=dod,
+            repository_profile=self.profile, task_evaluation=self.task_evaluation, profiling_error=self.profiling_error,
         )
 
 

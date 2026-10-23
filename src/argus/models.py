@@ -285,6 +285,154 @@ class DefinitionOfDone(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
 
 
+class RequirementStatus(str, Enum):
+    COVERED = "COVERED"
+    PARTIAL = "PARTIAL"
+    MISSING = "MISSING"
+    UNVERIFIED = "UNVERIFIED"
+
+
+class RequirementAssessment(BaseModel):
+    """A task requirement checked against implementation evidence, never against README prose alone."""
+
+    requirement_id: str
+    requirement: str
+    status: RequirementStatus
+    score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(default_factory=list)
+    explanation: str = ""
+    limitations: list[str] = Field(default_factory=list)
+
+
+class RepositoryProfile(BaseModel):
+    """Normalised, deterministic description of what a repository contains and implements."""
+
+    profile_version: str = "1.0"
+    repository: str
+    task_id: Optional[str] = None
+    task_category: Optional[str] = None
+    generated_at: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    languages: list[dict[str, Any]] = Field(default_factory=list)
+    technologies: list[dict[str, Any]] = Field(default_factory=list)
+    dependencies: dict[str, Any] = Field(default_factory=dict)
+    structure: dict[str, Any] = Field(default_factory=dict)
+    architecture: dict[str, Any] = Field(default_factory=dict)
+    features: list[dict[str, Any]] = Field(default_factory=list)
+    task_coverage: list[RequirementAssessment] = Field(default_factory=list)
+    task_coverage_score: Optional[float] = None
+    testing: dict[str, Any] = Field(default_factory=dict)
+    quality: dict[str, Any] = Field(default_factory=dict)
+    documentation: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence_level: str = "LOW"
+    evidence_fingerprint: Optional[str] = None
+    evidence_index: dict[str, Any] = Field(default_factory=dict)
+    evidence_sources: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TaskAssignment(BaseModel):
+    """How a repository was associated with a task, and how strongly that association is supported."""
+
+    task_id: str
+    title: str = ""
+    category: str = ""
+    description: str = ""
+    requirements: list[str] = Field(default_factory=list)
+    relation: str = "EXPLICIT"  # EXPLICIT | SEMANTIC | UNCERTAIN | UNRELATED
+    relevance: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    method: str = "configured"
+    explanation: str = ""
+    corroboration: Optional[float] = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class PeerRelevance(BaseModel):
+    repository: str
+    task_id: Optional[str] = None
+    relation: str = "SAME_TASK"  # SAME_TASK | SEMANTIC_EQUIVALENT | UNCERTAIN | UNRELATED | DUPLICATE
+    relevance: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    comparable: bool = False
+    duplicate: bool = False
+    reason: str = ""
+
+
+class CriterionScore(BaseModel):
+    id: str
+    label: str
+    kind: str = "absolute"  # absolute | relative_context
+    score: Optional[float] = None  # 0..100; None means not measurable from available evidence
+    weight: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    explanation: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class PeerComparison(BaseModel):
+    peer: str
+    relevance: float = Field(ge=0.0, le=1.0)
+    peer_criteria: dict[str, float] = Field(default_factory=dict)
+    criterion_deltas: dict[str, float] = Field(default_factory=dict)
+    relative_percentiles: dict[str, float] = Field(default_factory=dict)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    shared_strengths: list[str] = Field(default_factory=list)
+    explanation: str = ""
+
+
+class TaskEvaluationResult(BaseModel):
+    repository: str
+    task: TaskAssignment
+    profile: RepositoryProfile
+    comparable_repositories: list[PeerRelevance] = Field(default_factory=list)
+    excluded_repositories: list[PeerRelevance] = Field(default_factory=list)
+    criteria: list[CriterionScore] = Field(default_factory=list)
+    peer_comparisons: list[PeerComparison] = Field(default_factory=list)
+    missing_requirements: list[str] = Field(default_factory=list)
+    partial_requirements: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    absolute_score: Optional[float] = None
+    relative_score: Optional[float] = None
+    final_score: Optional[float] = None
+    score_explanation: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence_level: str = "LOW"
+    status: str = "ABSOLUTE_ONLY"
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TaskGroup(BaseModel):
+    task_id: str
+    task_ids: list[str] = Field(default_factory=list)
+    title: str = ""
+    category: str = ""
+    description: str = ""
+    requirements: list[str] = Field(default_factory=list)
+    repositories: list[str] = Field(default_factory=list)
+    pair_similarities: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TaskCrossValidationResult(BaseModel):
+    generated_at: str
+    method: str
+    task_relevance_threshold: float
+    task_similarity_threshold: float
+    minimum_peers: int
+    peer_context_weight: float
+    scoring_weights: dict[str, float] = Field(default_factory=dict)
+    groups: list[TaskGroup] = Field(default_factory=list)
+    evaluations: list[TaskEvaluationResult] = Field(default_factory=list)
+    assignments: list[TaskAssignment] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class FinalEvaluation(BaseModel):
     agent: dict[str, str]
     evaluation_id: str
@@ -307,3 +455,7 @@ class FinalEvaluation(BaseModel):
     executive_summary: dict[str, Any]
     completion_status: CompletionStatus
     definition_of_done: DefinitionOfDone
+    # Optional layers keep reports written before task profiling loadable.
+    repository_profile: Optional[RepositoryProfile] = None
+    task_evaluation: Optional[TaskEvaluationResult] = None
+    profiling_error: Optional[str] = None

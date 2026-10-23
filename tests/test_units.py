@@ -361,7 +361,7 @@ def test_invalid_historical_timezone_uses_git_epoch_without_losing_commit(tmp_pa
     epoch = int(next(line for line in raw.splitlines() if line.startswith('author ')).split()[-2])
     raw = raw.replace('+0000', '+51800')
     written = subprocess.run(['git', '-C', str(repo.path), 'hash-object', '--literally', '-t', 'commit', '-w', '--stdin'],
-                             input=raw, text=True, capture_output=True, check=True).stdout.strip()
+                             input=raw.encode('utf-8'), capture_output=True, check=True).stdout.decode().strip()
     repo._git('update-ref', 'refs/heads/main', written)
     commits = parse_history(repo.path, 'main')
     assert len(commits) == 1 and commits[0].sha == written
