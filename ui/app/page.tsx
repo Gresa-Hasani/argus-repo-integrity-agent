@@ -1,8 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RepositoryStatistics from "./repository-statistics";
+import { FadeContent, SplitText } from "./react-bits";
+import { BatchResults, SavedEvaluations, TaskComparisonPanel } from "./results-explorer";
+import { TaskResultPanel } from "./task-results";
+import {
+  Badge,
+  Bar,
+  EmptyState,
+  KV,
+  SEVERITY_STYLE,
+  STATUS_STYLE,
+  Section,
+  Stat,
+  TYPE_STYLE,
+  buttonGhost,
+  buttonPrimary,
+  buttonSecondary,
+  fmt,
+  formatTimestamp,
+  inputClass,
+  pct,
+  statusLabel,
+} from "./ui-kit";
 
 // Presentation only. Every number and status on this page is read from the ARGUS result;
 // statistical summaries are computed on the backend from measured report evidence.
@@ -18,63 +40,6 @@ type Source = "demo" | "api";
 const reportLinks = (id: string, source: Source) =>
   source === "demo" ? { report: `${DEMO_BASE}/${id}.md`, json: `${DEMO_BASE}/${id}.json` } : { report: `${API}/api/evaluate/${id}/report`, json: `${API}/api/evaluate/${id}/json` };
 
-const STATUS_STYLE: Record<string, string> = {
-  DONE_CLEAN: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
-  DONE_WITH_FINDINGS: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-  FLAGGED: "bg-red-500/15 text-red-300 border-red-500/40",
-  INCOMPLETE_EVALUATION: "bg-slate-500/20 text-slate-300 border-slate-500/40",
-  EVALUATOR_ERROR: "bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40",
-};
-const TYPE_STYLE: Record<string, string> = {
-  ENGINEERING_WEAKNESS: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-  ANOMALY: "bg-sky-500/15 text-sky-300 border-sky-500/30",
-  MATERIAL_INTEGRITY_CONCERN: "bg-red-500/15 text-red-300 border-red-500/30",
-  SECURITY: "bg-rose-500/15 text-rose-300 border-rose-500/30",
-};
-const SEVERITY_STYLE: Record<string, string> = {
-  LOW: "text-slate-300 border-slate-600",
-  MEDIUM: "text-amber-300 border-amber-500/40",
-  HIGH: "text-orange-300 border-orange-500/50",
-  CRITICAL: "text-red-300 border-red-500/60",
-};
-
-const fmt = (n: any) => (typeof n === "number" ? n.toLocaleString("en-US") : n ?? "n/a");
-const pct = (n: any) => (typeof n === "number" ? `${Math.round(n * 100)}%` : "n/a");
-
-function Badge({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <span className={`inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] tracking-wide ${className}`}>{children}</span>;
-}
-
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-5">
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-200">{title}</h2>
-        {hint && <span className="text-xs text-slate-500">{hint}</span>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Stat({ label, value, tone = "" }: { label: string; value: React.ReactNode; tone?: string }) {
-  return (
-    <div className="rounded-md border border-slate-800 bg-slate-950/60 px-4 py-3">
-      <div className="text-[11px] uppercase tracking-wider text-slate-500">{label}</div>
-      <div className={`mt-1 font-mono text-2xl ${tone || "text-slate-100"}`}>{value}</div>
-    </div>
-  );
-}
-
-function KV({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div className="flex justify-between gap-4 border-b border-slate-800/70 py-1.5 text-sm last:border-0">
-      <span className="text-slate-500">{k}</span>
-      <span className="break-all text-right font-mono text-slate-200">{v}</span>
-    </div>
-  );
-}
-
 function Finding({ f, candidates }: { f: any; candidates: any[] }) {
   const [open, setOpen] = useState(false);
   const security = f.category === "SECRET_EXPOSURE";
@@ -82,8 +47,14 @@ function Finding({ f, candidates }: { f: any; candidates: any[] }) {
   // Reports written before the statement became policy-generated carry the model's wording in `finding`.
   const statementIsDeterministic = f.text_origin === "deterministic" || f.origin === "deterministic";
   return (
-    <div className="rounded-md border border-slate-800 bg-slate-950/50">
-      <button onClick={() => setOpen(!open)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-left hover:bg-slate-900/70">
+    <div className="overflow-hidden rounded-lg border border-slate-800 bg-slate-950/50 transition hover:border-slate-700">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`finding-${f.finding_id}`}
+        onClick={() => setOpen(!open)}
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-left transition hover:bg-slate-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-400/60"
+      >
         <span className="font-mono text-xs text-slate-400">{f.finding_id}</span>
         <span className="min-w-0 flex-1 text-sm font-medium text-slate-100">{f.title}</span>
         <Badge className={TYPE_STYLE[security ? "SECURITY" : f.finding_type]}>{security ? "SECURITY" : f.finding_type.replaceAll("_", " ")}</Badge>
@@ -93,10 +64,10 @@ function Finding({ f, candidates }: { f: any; candidates: any[] }) {
         <Badge className={f.requires_manual_review ? "border-red-500/50 bg-red-500/15 text-red-300" : "border-slate-700 text-slate-400"}>
           MANUAL REVIEW: {f.requires_manual_review ? "YES" : "NO"}
         </Badge>
-        <span className="text-slate-500">{open ? "▾" : "▸"}</span>
+        <span aria-hidden="true" className="text-slate-500">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
-        <div className="grid gap-4 border-t border-slate-800 p-4 md:grid-cols-2">
+        <div id={`finding-${f.finding_id}`} className="argus-expand grid gap-4 border-t border-slate-800 p-4 md:grid-cols-2">
           <div className="rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">Deterministic evidence · authoritative</div>
             {statementIsDeterministic && <p className="text-sm text-slate-200">{f.finding}</p>}
@@ -145,16 +116,6 @@ function Finding({ f, candidates }: { f: any; candidates: any[] }) {
   );
 }
 
-function Bar({ label, value, max }: { label: string; value: number; max: number }) {
-  return (
-    <div className="flex items-center gap-3 text-sm">
-      <span className="w-28 shrink-0 text-slate-400">{label}</span>
-      <div className="h-2 flex-1 rounded bg-slate-800"><div className="h-2 rounded bg-sky-400/80" style={{ width: `${max ? Math.max(1, (value / max) * 100) : 0}%` }} /></div>
-      <span className="w-16 shrink-0 text-right font-mono text-slate-200">{fmt(value)}</span>
-    </div>
-  );
-}
-
 function Dashboard({ r, links, source }: { r: any; links: { report: string; json: string }; source: Source }) {
   const [showJson, setShowJson] = useState(false);
   const m = r.deterministic_metrics ?? {};
@@ -177,21 +138,28 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
   const anomalyByContributor = (id: string) => findings.filter((f) => (f.evidence ?? []).some((e: any) => e.type === "contributor" && e.data?.id === id));
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-xs uppercase tracking-wider text-slate-500">Evaluation result{source === "demo" ? " · saved real evaluation (bundled with this page)" : ""}</div>
-            <div className="mt-1 font-mono text-lg text-slate-100">{name}</div>
-            <div className="mt-1 text-xs text-slate-500">{r.evaluation_id} · {r.timestamp} · model {r.model?.model ?? "none"}{r.model?.fallback_used ? " (fallback)" : ""}</div>
+    <div id="report" className="scroll-mt-24 space-y-5">
+      <section className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/55 p-5 shadow-[0_24px_80px_-56px_rgba(56,189,248,0.65)] sm:p-6">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-400/70 to-transparent" />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Evaluation result{source === "demo" ? " · saved real evaluation (bundled with this page)" : ""}</div>
+            <div className="mt-1 break-all font-mono text-lg text-slate-100">{name}</div>
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
+              <span>{r.evaluation_id}</span><span aria-hidden="true">·</span>
+              <span title={r.timestamp}>{formatTimestamp(r.timestamp)}</span><span aria-hidden="true">·</span>
+              <span>model {r.model?.model ?? "none"}{r.model?.fallback_used ? " (fallback)" : ""}</span>
+            </div>
           </div>
-          <span className={`rounded-md border px-4 py-2 font-mono text-xl font-semibold ${STATUS_STYLE[r.completion_status] ?? ""}`}>{r.completion_status}</span>
+          <Badge className={`px-3 py-1.5 text-sm font-semibold ${STATUS_STYLE[r.completion_status] ?? "border-slate-700 text-slate-300"}`} title={r.completion_status}>
+            {statusLabel(r.completion_status)}
+          </Badge>
         </div>
         <p className="mt-4 text-sm leading-relaxed text-slate-300">{r.executive_summary?.text}</p>
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
           Authoritative summary: deterministic · Definition of Done: {r.definition_of_done?.satisfied ? "SATISFIED" : "NOT SATISFIED"} · model narrative: {r.executive_summary?.llm_narrative_status ?? "NOT_PRODUCED"}
         </p>
-        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-5 grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
           <Stat label="Findings" value={fmt(counts.open_findings)} />
           <Stat label="Integrity flags" value={fmt(counts.integrity_flags)} tone={counts.integrity_flags ? "text-red-300" : ""} />
           <Stat label="Manual review" value={r.manual_review?.required ? "YES" : "NO"} tone={r.manual_review?.required ? "text-red-300" : ""} />
@@ -207,7 +175,11 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
         </Section>
       )}
 
-      <Section title="Findings" hint={`${findings.length} finding(s) · observations are not findings`}>
+      <FadeContent>
+        <TaskResultPanel evaluation={r} />
+      </FadeContent>
+
+      <Section id="findings" title="Findings" hint={`${findings.length} finding(s) · observations are not findings`}>
         {findings.length === 0 ? <p className="text-sm text-slate-400">No findings.</p> : (
           <div className="space-y-2">{findings.map((f) => <Finding key={f.finding_id} f={f} candidates={candidates} />)}</div>
         )}
@@ -245,7 +217,7 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
 
       <Section title="Contributors" hint="Commit counts and LOC are forensic signals, not measures of quality · not ranked">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="text-[11px] uppercase tracking-wider text-slate-500">
               <tr><th className="py-2 pr-4">Identity</th><th className="pr-4">Authored</th><th className="pr-4">Co-authored</th><th className="pr-4">Raw +LOC</th><th className="pr-4">Meaningful +LOC (est.)</th><th className="pr-4">Active days</th><th>Policy</th></tr>
             </thead>
@@ -254,7 +226,7 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
                 const hits = anomalyByContributor(c.id);
                 return (
                   <tr key={c.id} className="border-t border-slate-800">
-                    <td className="py-2 pr-4 text-slate-200">{c.name} <span className="text-xs text-slate-500">{c.kind !== "human" ? `(${c.kind})` : ""}</span></td>
+                    <td className="max-w-[18rem] break-words py-2 pr-4 text-slate-200">{c.name} <span className="text-xs text-slate-500">{c.kind !== "human" ? `(${c.kind})` : ""}</span></td>
                     <td className="pr-4 font-mono">{fmt(c.authored_commits)}</td>
                     <td className="pr-4 font-mono">{fmt(c.coauthored_commits)}</td>
                     <td className="pr-4 font-mono">{fmt(c.raw_additions)}</td>
@@ -360,18 +332,18 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
 
       <Section title="AI candidate disposition" hint={`${candidates.length} candidate(s) proposed by the model · every one decided by deterministic policy`}>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[760px] text-left text-xs">
             <thead className="uppercase tracking-wider text-slate-500"><tr><th className="py-2 pr-3">ID</th><th className="pr-3">Step</th><th className="pr-3">Model claim</th><th className="pr-3">Proposed</th><th className="pr-3">Policy type</th><th className="pr-3">Disposition</th><th>Reason</th></tr></thead>
             <tbody>
               {candidates.map((c) => (
                 <tr key={c.candidate_id} className="border-t border-slate-800 align-top">
                   <td className="py-1.5 pr-3 font-mono text-slate-400">{c.candidate_id}</td>
                   <td className="pr-3 text-slate-400">{c.step}</td>
-                  <td className="pr-3 text-slate-200">{c.title}</td>
+                  <td className="max-w-[16rem] break-words pr-3 text-slate-200">{c.title}</td>
                   <td className="pr-3 font-mono text-slate-400">{c.proposed_category}/{c.proposed_severity}{c.proposed_manual_review ? "/review" : ""}</td>
                   <td className="pr-3 font-mono text-slate-300">{c.finding_type}</td>
                   <td className="pr-3 font-mono text-slate-300">{c.decision}{c.finding_id ? ` → ${c.finding_id}` : ""}</td>
-                  <td className="text-slate-500">{c.reason}</td>
+                  <td className="break-words text-slate-500">{c.reason}</td>
                 </tr>
               ))}
             </tbody>
@@ -379,13 +351,13 @@ function Dashboard({ r, links, source }: { r: any; links: { report: string; json
         </div>
       </Section>
 
-      <Section title="Reports">
+      <Section id="reports" title="Reports" hint="Markdown and JSON are generated from the same evaluated evidence">
         <div className="flex flex-wrap gap-3">
-          <a className="rounded-md border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-200 hover:border-sky-500" href={links.report} target="_blank" rel="noreferrer">Markdown report</a>
-          <a className="rounded-md border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-200 hover:border-sky-500" href={links.json} target="_blank" rel="noreferrer">JSON report</a>
-          <button className="rounded-md border border-slate-700 bg-slate-950 px-4 py-2 text-sm text-slate-200 hover:border-sky-500" onClick={() => setShowJson(!showJson)}>{showJson ? "Hide" : "View"} Raw Evaluation JSON</button>
+          <a className={buttonSecondary} href={links.report} target="_blank" rel="noreferrer">Markdown report</a>
+          <a className={buttonSecondary} href={links.json} target="_blank" rel="noreferrer">JSON report</a>
+          <button type="button" className={buttonSecondary} onClick={() => setShowJson(!showJson)} aria-expanded={showJson}>{showJson ? "Hide" : "View"} raw evaluation JSON</button>
         </div>
-        {showJson && <pre className="mt-4 max-h-[32rem] overflow-auto rounded-md border border-slate-800 bg-black/60 p-4 text-xs text-slate-300">{JSON.stringify(r, null, 2)}</pre>}
+        {showJson && <pre className="mt-4 max-h-[32rem] overflow-auto rounded-lg border border-slate-800 bg-black/60 p-4 text-xs text-slate-300">{JSON.stringify(r, null, 2)}</pre>}
       </Section>
     </div>
   );
@@ -414,6 +386,15 @@ function repositorySelection(text: string) {
   return { urls, invalid, duplicates };
 }
 
+function taskSlug(text: string) {
+  const value = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return value || "batch-task";
+}
+
 export default function Home() {
   const [repositoryText, setRepositoryText] = useState("");
   const [query, setQuery] = useState("graph coloring");
@@ -435,15 +416,23 @@ export default function Home() {
   const [ready, setReady] = useState<any>(null);
   const [providers, setProviders] = useState<any[]>([]);
   const [provider, setProvider] = useState("configured");
+  const [taskEnabled, setTaskEnabled] = useState(false);
+  const [taskId, setTaskId] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskCategory, setTaskCategory] = useState("");
+  const [taskDescription, setTaskDescription] = useState("");
+  const [taskRequirements, setTaskRequirements] = useState("");
   const [backendDown, setBackendDown] = useState(false);
   const [error, setError] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingGeneration = useRef(0);
-  const selection = repositorySelection(repositoryText);
+  const selection = useMemo(() => repositorySelection(repositoryText), [repositoryText]);
   const running = submitting || ["running", "comparing", "stopping"].includes(batch?.state);
   const liveDisabled = DEMO_MODE || backendDown;
   const selectedProvider = providers.find(p => p.id === provider);
   const providerUnavailable = provider === "configured" ? ready?.ai_reasoning_available === false : !selectedProvider?.configured;
+  const taskInvalid = taskEnabled && !taskDescription.trim();
+  const batchProgress = batch?.total ? Math.min(100, Math.round((Number(batch.completed ?? 0) / Number(batch.total)) * 100)) : 0;
 
   const open = useCallback(async (id: string, source: Source) => {
     setError("");
@@ -546,9 +535,19 @@ export default function Home() {
     e.preventDefault();
     if (DEMO_MODE) return;
     if (!selection.urls.length || selection.invalid.length || selection.urls.length > 50) return;
+    if (taskEnabled && !taskDescription.trim()) { setError("Describe the task before enabling task profiling."); return; }
+    const resolvedTaskId = taskId.trim() || `ui-${taskSlug(taskTitle || taskCategory || "batch-task")}`;
+    const task = taskEnabled ? {
+      id: resolvedTaskId,
+      description: taskDescription.trim(),
+      title: taskTitle.trim(),
+      category: taskCategory.trim(),
+      requirements: taskRequirements.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      assignments: Object.fromEntries(selection.urls.map((url) => [url, resolvedTaskId])),
+    } : undefined;
     setSubmitting(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${API}/api/batches`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: selection.urls, deterministic_only: deterministicOnly, provider }) });
+      const r = await fetch(`${API}/api/batches`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: selection.urls, deterministic_only: deterministicOnly, provider, ...(task ? { task } : {}) }) });
       const body = await r.json();
       if (!r.ok) { setError(typeof body.detail === "string" ? body.detail : "The API rejected the repository list."); return; }
       setBatch(body); setJob(body.items.find((item: any) => item.state === "running") ?? null);
@@ -571,89 +570,481 @@ export default function Home() {
 
   const repositoryCards = (rows: any[]) => rows.map((repo) => {
     const added = selection.urls.some((url) => url.toLowerCase() === repo.url.toLowerCase());
-    return <li key={repo.url} className="flex items-start justify-between gap-3 rounded-md border border-slate-800 bg-slate-950/60 p-3">
-      <div className="min-w-0"><a href={repo.url} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-sky-200 hover:underline">{repo.repository}</a><p className="mt-1 text-xs text-slate-400">{repo.description}</p></div>
-      <button type="button" onClick={() => addRepository(repo.url)} disabled={running || added} aria-label={`Add ${repo.repository}`} className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-200 hover:border-sky-500 disabled:opacity-40">{added ? "Added" : "Add"}</button>
-    </li>;
+    return (
+      <li key={repo.url} className="group flex items-start justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/50 p-3 transition hover:border-sky-500/35 hover:bg-slate-900/55">
+        <div className="min-w-0">
+          <a href={repo.url} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-sky-200 transition hover:text-sky-100 hover:underline">{repo.repository}</a>
+          <p className="mt-1 text-xs leading-relaxed text-slate-400">{repo.description || "No description provided."}</p>
+          {(repo.language || repo.stars) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+              {repo.language && <Badge className="border-slate-700 text-slate-400">{repo.language}</Badge>}
+              {typeof repo.stars === "number" && <span>★ {repo.stars.toLocaleString("en-US")}</span>}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => addRepository(repo.url)}
+          disabled={running || added}
+          aria-label={`${added ? "Added" : "Add"} ${repo.repository}`}
+          className={`${buttonSecondary} shrink-0 self-start px-3 py-1.5 text-xs`}
+        >
+          {added ? "Added" : "Add"}
+        </button>
+      </li>
+    );
   });
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-200">
-      <header className="border-b border-slate-800 bg-slate-950"><div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-5">
-        <div><div className="font-mono text-2xl font-semibold tracking-[0.25em] text-slate-50">ARGUS</div><div className="text-sm text-slate-400">Repository Forensics &amp; Engineering Integrity Agent</div></div>
-        <div className="text-right text-xs text-slate-500">{DEMO_MODE ? "Public demo · saved real evaluation · no backend" : health ? <>Local backend connected · AI reasoning {ready?.ai_reasoning_available ? "available" : "unavailable"}</> : "Connecting to local backend…"}</div>
-      </div></header>
-      <div className="mx-auto max-w-6xl space-y-5 px-6 py-8">
-        <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-6">
-          <h1 className="text-2xl font-semibold text-slate-50">Evaluate multiple repositories</h1>
-          <p className="mt-2 text-sm text-slate-400">Build a repository list, get a report for each project, and cross-check code and README similarity across the batch.</p>
-          {!DEMO_MODE && ready?.model && <p className="mt-2 text-sm text-slate-400">Configured reasoning model: <span className="font-mono text-sky-200">{ready.model}</span> · {ready.ai_reasoning_available ? "ready" : "unavailable"}</p>}
-          {DEMO_MODE && <div className="mt-4 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-sm text-sky-100"><strong>Public demo.</strong> This page shows a saved, real Qwen3-8B evaluation. Live evaluation is not available here: start the local ARGUS backend to evaluate a batch.</div>}
-          {!DEMO_MODE && backendDown && <p className="mt-4 text-sm text-amber-200">The local backend is not reachable. Start ARGUS and reload to evaluate repositories.</p>}
-          <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <form onSubmit={evaluate} className="space-y-3">
-              <label className="block"><span className="mb-2 block text-sm font-medium">Repository links</span>
-                <textarea value={repositoryText} onChange={(e) => setRepositoryText(e.target.value)} required rows={8} maxLength={20000} disabled={running || liveDisabled} placeholder={"https://github.com/owner/first-repository\nhttps://github.com/owner/second-repository"} className="w-full rounded-md border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-100 outline-none focus:border-sky-500" />
-              </label>
-              <p className="text-xs text-slate-400">Paste repository home-page URLs, one per line. You can also use commas or spaces. Up to 50 repositories per batch.</p>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="cursor-pointer text-xs text-sky-200">Import a .txt link list<input aria-label="Import repository links" type="file" accept=".txt,text/plain" disabled={running || liveDisabled} className="mt-1 block max-w-full text-xs text-slate-400" onChange={async (e) => {
-                  const input = e.currentTarget, file = input.files?.[0];
-                  if (!file) return;
-                  if (file.size > 100000) { setError("Use a text file smaller than 100 KB."); input.value = ""; return; }
-                  try { setRepositoryText(await file.text()); setError(""); } catch { setError("Could not read that text file."); }
-                  input.value = "";
-                }} /></label>
-                <button type="button" onClick={() => { setRepositoryText(""); setError(""); }} disabled={running} className="text-xs text-slate-400 hover:text-white">Clear links</button>
+    <main className="min-h-screen text-slate-200">
+      <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <a href="#top" className="group flex items-center gap-3 rounded-lg focus-visible:ring-2 focus-visible:ring-sky-300/60">
+            <span aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-lg border border-sky-400/30 bg-sky-400/10 font-mono text-xs font-bold tracking-[0.12em] text-sky-300">AR</span>
+            <span>
+              <span className="block font-mono text-xl font-semibold tracking-[0.22em] text-slate-50 transition group-hover:text-sky-100">ARGUS</span>
+              <span className="block text-[10px] uppercase tracking-[0.14em] text-slate-500">Repository forensics &amp; integrity</span>
+            </span>
+          </a>
+          <div className="flex items-center gap-2">
+            <span
+              aria-live="polite"
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] ${DEMO_MODE ? "border-sky-500/30 bg-sky-500/10 text-sky-200" : health ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}
+            >
+              <span aria-hidden="true" className={`status-dot h-1.5 w-1.5 rounded-full ${DEMO_MODE ? "bg-sky-300" : health ? "bg-emerald-300" : "bg-amber-300"}`} />
+              {DEMO_MODE ? "Public demo · static" : health ? "Local backend connected" : "Connecting to backend…"}
+            </span>
+            {!DEMO_MODE && ready?.model && (
+              <span className="hidden rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-[11px] text-slate-400 sm:inline-flex">
+                {ready.model} · {ready.ai_reasoning_available ? "AI ready" : "AI unavailable"}
+              </span>
+            )}
+          </div>
+        </div>
+        <nav aria-label="Page sections" className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 pb-2 text-xs sm:px-6 lg:px-8">
+          <a href="#evaluate" className="shrink-0 rounded-md px-2.5 py-1.5 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100">Evaluate</a>
+          {batch && <a href="#batch-results" className="shrink-0 rounded-md px-2.5 py-1.5 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100">Batch results</a>}
+          {result && <a href="#report" className="shrink-0 rounded-md px-2.5 py-1.5 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100">Report</a>}
+          {result && (result.task_evaluation || result.repository_profile) && <a href="#task-context" className="shrink-0 rounded-md px-2.5 py-1.5 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100">Task fit</a>}
+          <a href="#history" className="shrink-0 rounded-md px-2.5 py-1.5 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100">History</a>
+        </nav>
+      </header>
+
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+        <section id="top" className="relative scroll-mt-24 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/45 p-5 shadow-[0_30px_100px_-70px_rgba(56,189,248,0.8)] sm:p-7">
+          <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl" />
+          <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.55fr)] lg:items-end">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-sky-300/80">Measure first, reason second</p>
+              <SplitText
+                as="h1"
+                text="Evaluate repositories with evidence, not guesswork."
+                className="mt-2 max-w-3xl text-3xl font-semibold tracking-tight text-slate-50 sm:text-4xl lg:text-[2.7rem] lg:leading-[1.08]"
+              />
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+                Build a repository cohort, inspect integrity evidence and task fit, and compare only the peers that implement the same work. The report keeps measured facts, model reasoning and deterministic policy decisions visibly separate.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300">Deterministic evidence first</Badge>
+                <Badge className="border-sky-500/30 bg-sky-500/10 text-sky-300">Task-aware peer context</Badge>
+                <Badge className="border-slate-700 bg-slate-900/70 text-slate-300">Explainable scores</Badge>
               </div>
-              <p className="text-sm text-sky-200">{selection.urls.length} {selection.urls.length === 1 ? "repository" : "repositories"} selected{selection.duplicates > 0 ? ` · ${selection.duplicates} duplicate(s) ignored` : ""}</p>
-              {selection.invalid.length > 0 && <p className="break-all text-xs text-red-300">Fix these links: {selection.invalid.slice(0, 3).join(", ")}{selection.invalid.length > 3 ? "…" : ""}</p>}
-              {selection.urls.length > 50 && <p className="text-xs text-red-300">Select at most 50 repositories.</p>}
-              {!DEMO_MODE && <div className="space-y-2"><label className="block text-xs text-slate-300">AI provider<select aria-label="AI provider" value={provider} onChange={e => setProvider(e.target.value)} disabled={running || liveDisabled} className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2">{providers.length ? providers.map(p => <option key={p.id} value={p.id}>{p.id === "configured" ? "Server default" : p.id === "openai" ? "OpenAI API" : "Claude API"} · {p.model}{p.configured ? "" : " · API key required"}</option>) : <option value="configured">Server default</option>}</select></label>{selectedProvider && <p className="text-xs text-slate-400">{selectedProvider.provider} · {selectedProvider.model}{provider !== "configured" ? " · Sends evaluation evidence to the selected API; usage is billed to your API account." : ""}</p>}<details className="text-xs text-slate-400"><summary className="cursor-pointer">Configure OpenAI or Claude</summary><p className="mt-2">Set OPENAI_API_KEY or ANTHROPIC_API_KEY in the backend environment and restart the backend. Optional model overrides: ARGUS_OPENAI_MODEL and ARGUS_ANTHROPIC_MODEL. Keys stay on the server.</p></details></div>}
-              <label className="flex items-start gap-2 text-xs text-slate-400"><input type="checkbox" checked={deterministicOnly} onChange={(e) => setDeterministicOnly(e.target.checked)} disabled={running || liveDisabled} className="mt-0.5" /><span>Deterministic evidence only (skip AI reasoning). These reports are INCOMPLETE_EVALUATION because model checks do not run.</span></label>
-              {!DEMO_MODE && providerUnavailable && !deterministicOnly && <p className="text-xs text-amber-200">The selected provider is unavailable. Start its runtime or configure its API key, or select deterministic evidence only.</p>}
-              <button type="submit" disabled={running || liveDisabled || !selection.urls.length || !!selection.invalid.length || selection.urls.length > 50 || (!deterministicOnly && providerUnavailable)} className="w-full rounded-md bg-sky-500 px-5 py-3 font-semibold text-slate-950 hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40">{running ? `Evaluating batch · ${batch?.completed ?? 0}/${batch?.total ?? selection.urls.length}` : `Evaluate ${selection.urls.length || "selected"} ${selection.urls.length === 1 ? "repository" : "repositories"}`}</button>
-              <p className="text-xs text-slate-500">Repositories are queued one at a time. Closing this page does not cancel the batch.</p>
-              {error && <p role="alert" className="rounded border border-red-500/30 p-3 text-sm text-red-200">{error}</p>}
-            </form>
-            <div className="space-y-4">
-              <div><h2 className="text-sm font-semibold text-slate-100">Find public repositories</h2><div className="mt-2 flex gap-2"><input aria-label="Search public GitHub repositories" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} maxLength={120} placeholder="graph coloring, social golfer, timetabling…" className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><button type="button" onClick={search} disabled={searching || liveDisabled || query.trim().length < 2} className="rounded border border-sky-500/40 px-3 py-2 text-sm text-sky-200 disabled:opacity-40">{searching ? "Searching…" : "Search GitHub"}</button></div>
-                {searchError && <p role="alert" className="mt-2 text-xs text-amber-200">{searchError}</p>}
-                {searched && !searchResults.length && <p className="mt-2 text-xs text-slate-400">No public repositories found. Try another search.</p>}
-                {!!searchResults.length && <ul className="mt-3 max-h-64 space-y-2 overflow-auto">{repositoryCards(searchResults)}</ul>}
-              </div>
-              <div className="flex items-center justify-between gap-2"><h2 className="text-sm font-semibold text-slate-100">Public test repositories</h2><button type="button" disabled={running} onClick={() => PUBLIC_TEST_REPOS.forEach((repo) => addRepository(repo.url))} className="text-xs text-sky-200 hover:underline">Add all 4 test repositories</button></div>
-              <ul className="space-y-2">{repositoryCards(PUBLIC_TEST_REPOS)}</ul>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
+              <Stat label="Mode" value={DEMO_MODE ? "DEMO" : "LOCAL"} hint={DEMO_MODE ? "Saved real evaluation" : "Local backend"} />
+              <Stat label="Saved reports" value={fmt(saved.length)} hint="Available without rerunning" />
+              <Stat label="Model" value={ready?.model ?? "—"} hint={DEMO_MODE ? "Bundled Qwen report" : ready?.ai_reasoning_available ? "AI reasoning ready" : "Deterministic only"} />
+              <Stat label="Queue" value={running ? `${batch?.completed ?? 0}/${batch?.total ?? 0}` : "Ready"} tone={running ? "text-sky-300" : ""} hint={running ? "Batch in progress" : "Accepting work"} />
             </div>
           </div>
         </section>
 
-        {!DEMO_MODE && !!savedBatches.length && <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"><label className="text-sm text-slate-300">View saved batch results<select aria-label="View saved batch results" value={batch?.batch_id ?? ""} disabled={running} onChange={e => { if (e.target.value) { setError(""); setRepositoryText(""); trackBatch(e.target.value); try { localStorage.setItem("argus.latestBatch", e.target.value); } catch {} } }} className="mt-2 w-full rounded border border-slate-700 bg-slate-950 p-2 text-xs"><option value="">Choose a completed batch to display its graphs</option>{batch && !savedBatches.some(b => b.batch_id === batch.batch_id) && <option value={batch.batch_id}>Current batch · {batch.total} repositories</option>}{savedBatches.map(b => <option key={b.batch_id} value={b.batch_id}>{b.batch_id} · {b.total} repositories · {b.model} · {b.state.replaceAll("_", " ")}</option>)}</select></label></div>}
-        {batch && <Section title="Repository statistics" hint="Per-repository measurements · shared comparison scales"><RepositoryStatistics key={batch.batch_id} api={API} batchId={batch.batch_id} revision={`${batch.completed}:${batch.state}`} /></Section>}
-        {batch && <Section title="Batch evaluation" hint={`${batch.completed}/${batch.total} finished · ${batch.state.replaceAll("_", " ")} · ${batch.elapsed_s}s`}>
-          {running && <button type="button" onClick={stopEvaluation} disabled={stopping || batch.state === "stopping"} className="mb-4 rounded border border-red-500/60 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-200 disabled:opacity-50">{stopping || batch.state === "stopping" ? "Stopping evaluation…" : "Stop evaluation"}</button>}
-          {batch.state === "cancelled" && <p role="status" className="mb-3 text-sm text-amber-200">Evaluation stopped. {batch.cancelled ?? 0} repositories cancelled. Completed reports remain available.</p>}
-          {batch.state === "stopping" && <p role="status" className="mb-3 text-sm text-amber-200">Stopping the active worker and cancelling the remaining queue…</p>}
-          <p className="mb-3 text-xs text-slate-400">{batch.fixture && <strong className="mr-2 text-sky-200">Controlled local test · generated repositories, not public GitHub links.</strong>}Model: {batch.model} · Each result keeps its own integrity status.</p>
-          <div className="max-h-96 overflow-auto"><table className="w-full text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="pb-2">Repository</th><th>Status</th><th>Report</th></tr></thead><tbody>
-            {batch.items.map((item: any) => <tr key={item.job_id} className="border-t border-slate-800"><td className="py-3 pr-3">{batch.fixture ? <span className="break-all font-mono text-xs text-sky-200">{item.repository}</span> : <a href={`https://github.com/${item.repository}`} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-sky-200">{item.repository}</a>}{item.error && <p className="mt-1 text-xs text-red-300">{item.error}</p>}</td><td className="pr-3">{item.similarity_flagged && <div className="mb-1"><Badge className={STATUS_STYLE.FLAGGED}>CODE OVERLAP · REVIEW REQUIRED</Badge></div>}{item.completion_status ? <Badge className={STATUS_STYLE[item.completion_status]}>{item.completion_status}</Badge> : <span className={item.state === "failed" ? "text-red-300" : "text-slate-300"}>{item.state === "running" ? item.stages[item.stage_index] ?? "Running" : item.state === "queued" ? "Queued" : item.state === "failed" ? "Failed" : item.state === "cancelled" ? "Stopped" : "Report ready"}</span>}</td><td>{item.evaluation_id && <button onClick={() => open(item.evaluation_id, "api")} className="rounded border border-slate-600 px-3 py-1 text-xs hover:border-sky-500">Open report</button>}</td></tr>)}
-          </tbody></table></div>
-          {batch.state === "comparing" && <p className="mt-3 text-sm text-sky-200">Comparing repository code and README patterns…</p>}
-          {batch.cross_validation_error && <p role="alert" className="mt-3 text-sm text-amber-200">{batch.cross_validation_error}</p>}
-          {batch.persistence_error && <p role="alert" className="mt-3 text-sm text-amber-200">{batch.persistence_error}</p>}
-        </Section>}
+        {DEMO_MODE && (
+          <div role="status" className="rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 text-sm leading-relaxed text-sky-100">
+            <strong>Public demo.</strong> This page shows a saved, real Qwen3-8B evaluation. Live evaluation is not available here: start the local ARGUS backend to evaluate a batch.
+          </div>
+        )}
+        {!DEMO_MODE && backendDown && (
+          <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-100">
+            The local backend is not reachable. Start ARGUS and reload to evaluate repositories. Saved demo results remain readable.
+          </div>
+        )}
 
-        {job && <Section title="Current evaluation" hint={job.repository}><ol className="mb-3 flex flex-wrap gap-4 text-xs text-slate-400">{job.stages.map((stage: string, i: number) => <li key={stage} className={i === job.stage_index ? "text-sky-200" : ""}>{i < job.stage_index ? "✓ " : ""}{stage}{job.deterministic_only && i === 2 ? " (skipped)" : ""}</li>)}</ol><pre className="max-h-40 overflow-auto rounded border border-slate-800 bg-black/40 p-3 text-xs text-slate-400">{job.log.join("\n")}</pre></Section>}
+        <section id="evaluate" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-slate-900/45 p-4 shadow-[0_24px_90px_-70px_rgba(56,189,248,0.6)] sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-slate-50">Start a batch evaluation</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-400">Paste public GitHub repositories or add curated samples. ARGUS evaluates them one at a time and keeps every report.</p>
+            </div>
+            <Badge className="border-slate-700 bg-slate-950/70 text-slate-300">Up to 50 repositories</Badge>
+          </div>
 
-        {!!batch?.cross_validation?.length && <Section title="Cross-repository checks" hint={`${batch.cross_validation.length} repository pairs · README structure is advisory`}>
-          <div className="max-h-96 overflow-auto"><table className="w-full text-left text-xs"><thead className="text-slate-500"><tr><th className="pb-2">Repository pair</th><th className="pr-3">Code A → B</th><th className="pr-3">Code B → A</th><th className="pr-3">README text</th><th>README headings</th></tr></thead><tbody>{batch.cross_validation.map((pair: any) => <tr key={`${pair.a}:${pair.b}`} className="border-t border-slate-800"><td className="py-3 pr-3"><div>A: {pair.a}</div><div>B: {pair.b}</div>{pair.flagged && <div className="mt-2 text-rose-300">FLAGGED · code overlap ≥ {Math.round(pair.threshold * 100)}% · review required</div>}</td>{[pair.code_a_in_b, pair.code_b_in_a, pair.readme_text_similarity, pair.readme_heading_similarity].map((value: any, i: number) => <td key={i} className="pr-3">{typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "Unavailable"}</td>)}</tr>)}</tbody></table></div>
-          <p className="mt-3 text-xs text-slate-500">Code overlap uses token-shingle containment in both directions. Code overlap at or above the configured threshold flags both participants for review and excludes them from the primary statistics. Shared templates, libraries and attribution still require review; overlap alone does not establish copying direction or intent.</p>
-        </Section>}
+          <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+            <form onSubmit={evaluate} className="space-y-4">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/35 p-4">
+                <label htmlFor="repository-links" className="block">
+                  <span className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-medium text-slate-200">
+                    Repository links
+                    <span className="text-[10px] font-normal uppercase tracking-[0.14em] text-slate-500">required</span>
+                  </span>
+                  <textarea
+                    id="repository-links"
+                    value={repositoryText}
+                    onChange={(event) => setRepositoryText(event.target.value)}
+                    required
+                    rows={8}
+                    maxLength={20000}
+                    disabled={running || liveDisabled}
+                    aria-describedby="repository-links-help"
+                    placeholder={"https://github.com/owner/first-repository\nhttps://github.com/owner/second-repository"}
+                    className={`${inputClass} mt-2 min-h-44 resize-y font-mono text-xs leading-relaxed`}
+                  />
+                </label>
+                <p id="repository-links-help" className="mt-2 text-xs leading-relaxed text-slate-500">One home-page URL per line. Commas, spaces and semicolons also work. Duplicate links are removed before scheduling.</p>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className={`${buttonSecondary} cursor-pointer px-3 py-1.5 text-xs`}>
+                      Import .txt
+                      <input
+                        aria-label="Import repository links"
+                        type="file"
+                        accept=".txt,text/plain"
+                        disabled={running || liveDisabled}
+                        className="sr-only"
+                        onChange={async (event) => {
+                          const input = event.currentTarget;
+                          const file = input.files?.[0];
+                          if (!file) return;
+                          if (file.size > 100000) {
+                            setError("Use a text file smaller than 100 KB.");
+                            input.value = "";
+                            return;
+                          }
+                          try {
+                            setRepositoryText(await file.text());
+                            setError("");
+                          } catch {
+                            setError("Could not read that text file.");
+                          }
+                          input.value = "";
+                        }}
+                      />
+                    </label>
+                    <button type="button" onClick={() => { setRepositoryText(""); setError(""); }} disabled={running || liveDisabled} className={buttonGhost}>Clear links</button>
+                  </div>
+                  <span className="text-xs text-sky-200" aria-live="polite">
+                    {selection.urls.length} {selection.urls.length === 1 ? "repository" : "repositories"} selected
+                    {selection.duplicates > 0 ? ` · ${selection.duplicates} duplicate(s) ignored` : ""}
+                  </span>
+                </div>
+                {selection.invalid.length > 0 && (
+                  <p role="alert" className="mt-2 break-all text-xs text-red-300">
+                    Fix these links: {selection.invalid.slice(0, 3).join(", ")}{selection.invalid.length > 3 ? "…" : ""}
+                  </p>
+                )}
+                {selection.urls.length > 50 && <p role="alert" className="mt-2 text-xs text-red-300">Select at most 50 repositories.</p>}
+              </div>
 
-        {result && <Dashboard r={result} links={reportLinks(evaluationId, resultSource)} source={resultSource} />}
-        <Section title="Completed evaluations" hint={DEMO_MODE ? "Saved real ARGUS result bundled with this page" : "Saved reports are available without re-running evaluations"}>
-          {saved.length === 0 ? <p className="text-sm text-slate-400">No saved evaluations yet.</p> : <ul className="divide-y divide-slate-800">{saved.map((s) => <li key={s.evaluation_id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><span className="font-mono text-sm">{s.repository}</span><span className="ml-3 text-xs text-slate-500">{s.timestamp} · {s.model ?? "no model"} · {s.findings} finding(s){s.source === "demo" ? " · bundled demo result" : ""}</span></div><div className="flex items-center gap-3"><Badge className={STATUS_STYLE[s.status]}>{s.status}</Badge><button onClick={() => open(s.evaluation_id, s.source)} className="rounded border border-slate-700 px-3 py-1 text-xs hover:border-sky-500">Open</button></div></li>)}</ul>}
+              {!DEMO_MODE && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/35 p-4">
+                    <label className="block text-xs text-slate-300">
+                      AI provider
+                      <select aria-label="AI provider" value={provider} onChange={(event) => setProvider(event.target.value)} disabled={running || liveDisabled} className={`${inputClass} mt-1.5`}>
+                        {providers.length ? providers.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.id === "configured" ? "Server default" : item.id === "openai" ? "OpenAI API" : "Claude API"} · {item.model}{item.configured ? "" : " · API key required"}
+                          </option>
+                        )) : <option value="configured">Server default</option>}
+                      </select>
+                    </label>
+                    {selectedProvider && (
+                      <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+                        {selectedProvider.provider} · {selectedProvider.model}
+                        {provider !== "configured" ? " · Sends evaluation evidence to the selected API; usage is billed to your API account." : ""}
+                      </p>
+                    )}
+                    <details className="mt-2 text-[11px] text-slate-500">
+                      <summary className="cursor-pointer text-slate-400">Configure OpenAI or Claude</summary>
+                      <p className="mt-1.5 leading-relaxed">Set OPENAI_API_KEY or ANTHROPIC_API_KEY in the backend environment and restart the backend. Optional model overrides: ARGUS_OPENAI_MODEL and ARGUS_ANTHROPIC_MODEL. Keys stay on the server.</p>
+                    </details>
+                  </div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-800 bg-slate-950/35 p-4 transition hover:border-slate-700">
+                    <input type="checkbox" checked={deterministicOnly} onChange={(event) => setDeterministicOnly(event.target.checked)} disabled={running || liveDisabled} className="mt-0.5 h-4 w-4 accent-sky-400" />
+                    <span>
+                      <span className="block text-sm font-medium text-slate-200">Deterministic evidence only</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-slate-500">Skip AI reasoning for a faster run. These reports are marked INCOMPLETE_EVALUATION because model checks do not run.</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {!DEMO_MODE && providerUnavailable && !deterministicOnly && (
+                <p role="alert" className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
+                  The selected provider is unavailable. Start its runtime or configure its API key, or select deterministic evidence only.
+                </p>
+              )}
+
+              <details className="group rounded-xl border border-slate-800 bg-slate-950/35">
+                <summary className="flex cursor-pointer items-start justify-between gap-3 p-4">
+                  <span>
+                    <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-200">Task context <Badge className="border-slate-700 text-slate-400">Optional</Badge></span>
+                    <span className="mt-1 block text-xs leading-relaxed text-slate-500">Describe the work being evaluated. ARGUS profiles implementation evidence, checks requirements and compares only task-relevant peers.</span>
+                  </span>
+                  <span aria-hidden="true" className="mt-0.5 text-slate-500 transition group-open:rotate-180">⌄</span>
+                </summary>
+                <div className="border-t border-slate-800 p-4">
+                  <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-800 bg-slate-900/45 p-3 transition hover:border-slate-700">
+                    <input type="checkbox" checked={taskEnabled} onChange={(event) => setTaskEnabled(event.target.checked)} disabled={running || liveDisabled} className="mt-0.5 h-4 w-4 accent-sky-400" />
+                    <span>
+                      <span className="block text-sm font-medium text-slate-200">Enable task profiling and peer comparison</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-slate-500">All selected repositories are explicitly assigned to this task. README mentions alone are never treated as implementation evidence.</span>
+                    </span>
+                  </label>
+                  {taskEnabled && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label className="block text-xs text-slate-300">
+                        Task ID
+                        <input value={taskId} onChange={(event) => setTaskId(event.target.value)} maxLength={120} disabled={running || liveDisabled} placeholder="ui-graph-coloring" className={`${inputClass} mt-1.5`} />
+                        <span className="mt-1 block text-[11px] text-slate-500">Optional. A stable ID is generated when blank.</span>
+                      </label>
+                      <label className="block text-xs text-slate-300">
+                        Title
+                        <input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} maxLength={300} disabled={running || liveDisabled} placeholder="Graph coloring heuristics" className={`${inputClass} mt-1.5`} />
+                      </label>
+                      <label className="block text-xs text-slate-300">
+                        Category
+                        <input value={taskCategory} onChange={(event) => setTaskCategory(event.target.value)} maxLength={120} disabled={running || liveDisabled} placeholder="Algorithms" className={`${inputClass} mt-1.5`} />
+                      </label>
+                      <label className="block text-xs text-slate-300">
+                        Peer context weight
+                        <input value="0.15 · server default" readOnly disabled aria-label="Peer context weight is configured on the server" className={`${inputClass} mt-1.5`} />
+                        <span className="mt-1 block text-[11px] text-slate-500">Peer context is capped by the backend and stays below the absolute score.</span>
+                      </label>
+                      <label className="block text-xs text-slate-300 sm:col-span-2">
+                        Task description <span className="text-red-300">required</span>
+                        <textarea
+                          value={taskDescription}
+                          onChange={(event) => setTaskDescription(event.target.value)}
+                          rows={3}
+                          maxLength={12000}
+                          disabled={running || liveDisabled}
+                          required={taskEnabled}
+                          aria-invalid={taskInvalid}
+                          aria-describedby="task-description-help"
+                          placeholder="Describe the required behaviour, algorithms and deliverables in enough detail to distinguish this task from adjacent work."
+                          className={`${inputClass} mt-1.5 resize-y leading-relaxed ${taskInvalid ? "border-red-500/60" : ""}`}
+                        />
+                        <span id="task-description-help" className="mt-1 block text-[11px] leading-relaxed text-slate-500">This text drives task similarity and requirement matching. It is not used as evidence of implementation.</span>
+                      </label>
+                      <label className="block text-xs text-slate-300 sm:col-span-2">
+                        Requirements
+                        <textarea
+                          value={taskRequirements}
+                          onChange={(event) => setTaskRequirements(event.target.value)}
+                          rows={4}
+                          disabled={running || liveDisabled}
+                          placeholder={"One requirement per line\nParse DIMACS graph instances\nImplement a coloring heuristic\nCompare solution quality across instances"}
+                          className={`${inputClass} mt-1.5 resize-y font-mono text-xs leading-relaxed`}
+                        />
+                        <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">Optional. Coverage is assessed from source and test evidence; each requirement is reported as covered, partial, missing or unverified.</span>
+                      </label>
+                    </div>
+                  )}
+                  {taskInvalid && <p role="alert" className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">Describe the task before enabling task profiling.</p>}
+                </div>
+              </details>
+
+              <button
+                type="submit"
+                disabled={running || liveDisabled || !selection.urls.length || !!selection.invalid.length || selection.urls.length > 50 || (!deterministicOnly && providerUnavailable) || taskInvalid}
+                className={`${buttonPrimary} w-full py-3`}
+              >
+                {running ? `Evaluating batch · ${batch?.completed ?? 0}/${batch?.total ?? selection.urls.length}` : `Evaluate ${selection.urls.length || "selected"} ${selection.urls.length === 1 ? "repository" : "repositories"}`}
+              </button>
+              <p className="text-xs text-slate-500">Repositories are queued one at a time. Closing this page does not cancel the batch.</p>
+              {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm leading-relaxed text-red-200">{error}</p>}
+            </form>
+
+            <aside className="space-y-4">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/35 p-4">
+                <h3 className="text-sm font-semibold text-slate-100">Find public repositories</h3>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">Search GitHub and add candidates to the batch without leaving the page.</p>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    aria-label="Search public GitHub repositories"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void search(); } }}
+                    maxLength={120}
+                    placeholder="graph coloring, social golfer, timetabling…"
+                    className={`${inputClass} min-w-0 flex-1`}
+                  />
+                  <button type="button" onClick={() => { void search(); }} disabled={searching || liveDisabled || query.trim().length < 2} className={`${buttonSecondary} shrink-0`}>
+                    {searching ? "Searching…" : "Search"}
+                  </button>
+                </div>
+                {searchError && <p role="alert" className="mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2.5 text-xs leading-relaxed text-amber-200">{searchError}</p>}
+                {searching && <div className="mt-3 space-y-2" role="status" aria-live="polite"><div className="loading-shimmer relative h-14 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/50" /><span className="sr-only">Searching public repositories</span></div>}
+                {searched && !searchResults.length && !searching && <div className="mt-3"><EmptyState title="No public repositories found" description="Try a broader query or paste repository URLs directly." /></div>}
+                {!!searchResults.length && <ul className="mt-3 max-h-72 space-y-2 overflow-auto pr-0.5">{repositoryCards(searchResults)}</ul>}
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950/35 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-100">Curated test repositories</h3>
+                    <p className="mt-1 text-xs text-slate-500">Small public projects for trying cohort and task comparison.</p>
+                  </div>
+                  <button type="button" disabled={running || liveDisabled} onClick={() => PUBLIC_TEST_REPOS.forEach((repo) => addRepository(repo.url))} className={buttonGhost}>Add all 4</button>
+                </div>
+                <ul className="mt-3 space-y-2">{repositoryCards(PUBLIC_TEST_REPOS)}</ul>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        {!DEMO_MODE && !!savedBatches.length && (
+          <FadeContent>
+            <Section id="saved-batches" title="Saved batch results" hint="Reopen a completed cohort without evaluating it again">
+              <label className="block text-sm text-slate-300">
+                Choose a completed batch
+                <select
+                  aria-label="View saved batch results"
+                  value={batch?.batch_id ?? ""}
+                  disabled={running || liveDisabled}
+                  onChange={(event) => {
+                    if (!event.target.value) return;
+                    setError("");
+                    setRepositoryText("");
+                    trackBatch(event.target.value);
+                    try { localStorage.setItem("argus.latestBatch", event.target.value); } catch {}
+                  }}
+                  className={`${inputClass} mt-2`}
+                >
+                  <option value="">Select a saved batch to display its graphs</option>
+                  {batch && !savedBatches.some((item) => item.batch_id === batch.batch_id) && <option value={batch.batch_id}>Current batch · {batch.total} repositories</option>}
+                  {savedBatches.map((item) => <option key={item.batch_id} value={item.batch_id}>{item.batch_id} · {item.total} repositories · {item.model} · {String(item.state).replaceAll("_", " ")}</option>)}
+                </select>
+              </label>
+            </Section>
+          </FadeContent>
+        )}
+
+        {batch && (
+          <FadeContent>
+            <Section title="Repository statistics" hint="Per-repository measurements · shared comparison scales">
+              <RepositoryStatistics key={batch.batch_id} api={API} batchId={batch.batch_id} revision={`${batch.completed}:${batch.state}`} />
+            </Section>
+          </FadeContent>
+        )}
+
+        {batch && (
+          <FadeContent>
+            <Section
+              id="batch-results"
+              title="Batch evaluation"
+              hint={`${batch.completed ?? 0}/${batch.total ?? 0} finished · ${String(batch.state).replaceAll("_", " ")} · ${batch.elapsed_s ?? 0}s`}
+              action={running ? (
+                <button
+                  type="button"
+                  onClick={stopEvaluation}
+                  disabled={stopping || batch.state === "stopping"}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/10 px-3.5 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {stopping || batch.state === "stopping" ? "Stopping…" : "Stop evaluation"}
+                </button>
+              ) : <Badge className={STATUS_STYLE[batch.state] ?? "border-slate-700 text-slate-300"}>{String(batch.state).replaceAll("_", " ")}</Badge>}
+            >
+              <div className="rounded-xl border border-slate-800 bg-slate-950/35 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300"><span className="font-mono text-slate-100">{batch.completed ?? 0}</span> of <span className="font-mono text-slate-100">{batch.total ?? 0}</span> repositories finished</span>
+                  <span className="text-slate-500">{batch.fixture ? "Controlled local fixture" : "Public GitHub cohort"} · model {batch.model}</span>
+                </div>
+                <div
+                  className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800"
+                  role="progressbar"
+                  aria-label="Batch evaluation progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={batchProgress}
+                  aria-valuetext={`${batchProgress}% complete`}
+                >
+                  <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-[width] duration-500" style={{ width: `${batchProgress}%` }} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                  <span>{batch.state === "comparing" ? "Comparing code and README patterns…" : running ? "Evaluating repositories one at a time." : "Completed reports remain available below."}</span>
+                  {batch.fixture && <span className="text-sky-300">Generated repositories, not public GitHub links.</span>}
+                </div>
+              </div>
+              {batch.state === "cancelled" && <p role="status" className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-200">Evaluation stopped. {batch.cancelled ?? 0} repositories cancelled. Completed reports remain available.</p>}
+              {batch.state === "stopping" && <p role="status" className="mt-3 text-sm text-amber-200">Stopping the active worker and cancelling the remaining queue…</p>}
+              <div className="mt-4"><BatchResults key={batch.batch_id} batch={batch} onOpen={open} /></div>
+              {batch.state === "comparing" && <p className="mt-3 text-sm text-sky-200">Comparing repository code and README patterns…</p>}
+              {(batch.task_cross_validation || batch.task_cross_validation_error) && (
+                <div className="mt-5 border-t border-slate-800 pt-5">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Task-based peer comparison</h3>
+                  <TaskComparisonPanel validation={batch.task_cross_validation} error={batch.task_cross_validation_error} />
+                </div>
+              )}
+              {batch.cross_validation_error && <p role="alert" className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-200">{batch.cross_validation_error}</p>}
+              {batch.persistence_error && <p role="alert" className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-200">{batch.persistence_error}</p>}
+            </Section>
+          </FadeContent>
+        )}
+
+        {job && (
+          <FadeContent>
+            <Section title="Current evaluation" hint={job.repository}>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <Badge className="border-sky-500/40 bg-sky-500/10 text-sky-300">Running</Badge>
+                <span>{job.stages?.[job.stage_index] ?? "Working"}</span>
+                {job.deterministic_only && <Badge className="border-slate-700 text-slate-400">DETERMINISTIC ONLY</Badge>}
+              </div>
+              <ol className="mt-3 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
+                {(job.stages ?? []).map((stage: string, index: number) => {
+                  const done = index < job.stage_index;
+                  const current = index === job.stage_index;
+                  return (
+                    <li key={stage} className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${current ? "border-sky-500/40 bg-sky-500/10 text-sky-100" : done ? "border-emerald-500/25 text-emerald-300" : "border-slate-800 text-slate-500"}`}>
+                      <span aria-hidden="true" className="font-mono">{done ? "✓" : current ? "•" : "○"}</span>
+                      <span className="min-w-0 break-words">{stage}{job.deterministic_only && index === 2 ? " (skipped)" : ""}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+              <details className="mt-3 rounded-lg border border-slate-800 bg-black/20 p-3">
+                <summary className="cursor-pointer text-xs text-slate-400">Execution log</summary>
+                <pre className="mt-2 max-h-40 overflow-auto text-xs leading-relaxed text-slate-400">{job.log.join("\n")}</pre>
+              </details>
+            </Section>
+          </FadeContent>
+        )}
+
+        {!!batch?.cross_validation?.length && (
+          <FadeContent>
+            <Section title="Cross-repository checks" hint={`${batch.cross_validation.length} repository pairs · README structure is advisory`}>
+              <div className="overflow-x-auto rounded-xl border border-slate-800">
+                <table className="min-w-[720px] w-full text-left text-xs">
+                  <thead className="bg-slate-950/50 text-[10px] uppercase tracking-[0.14em] text-slate-500"><tr><th className="px-3 py-3 font-medium">Repository pair</th><th className="px-3 py-3 font-medium">Code A → B</th><th className="px-3 py-3 font-medium">Code B → A</th><th className="px-3 py-3 font-medium">README text</th><th className="px-3 py-3 font-medium">README headings</th></tr></thead>
+                  <tbody className="divide-y divide-slate-800/80">{batch.cross_validation.map((pair: any) => <tr key={`${pair.a}:${pair.b}`} className="align-top transition hover:bg-slate-900/45"><td className="px-3 py-3 pr-3"><div className="break-all font-mono text-slate-300">A: {pair.a}</div><div className="break-all font-mono text-slate-300">B: {pair.b}</div>{pair.flagged && <div className="mt-2 text-rose-300">FLAGGED · code overlap ≥ {Math.round(pair.threshold * 100)}% · review required</div>}</td>{[pair.code_a_in_b, pair.code_b_in_a, pair.readme_text_similarity, pair.readme_heading_similarity].map((value: any, index: number) => <td key={index} className="px-3 py-3 font-mono text-slate-300">{typeof value === "number" ? `${(value * 100).toFixed(1)}%` : "Unavailable"}</td>)}</tr>)}</tbody>
+                </table>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-slate-500">Code overlap uses token-shingle containment in both directions. Code overlap at or above the configured threshold flags both participants for review and excludes them from the primary statistics. Shared templates, libraries and attribution still require review; overlap alone does not establish copying direction or intent.</p>
+            </Section>
+          </FadeContent>
+        )}
+
+        {result && <FadeContent><Dashboard r={result} links={reportLinks(evaluationId, resultSource)} source={resultSource} /></FadeContent>}
+
+        <Section id="history" title="Completed evaluations" hint={DEMO_MODE ? "Saved real ARGUS result bundled with this page" : "Saved reports are available without re-running evaluations"}>
+          <SavedEvaluations rows={saved} onOpen={open} demoMode={DEMO_MODE} />
         </Section>
+
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 px-1 py-4 text-[11px] text-slate-600">
+          <span>ARGUS · Repository Forensics &amp; Engineering Integrity Agent</span>
+          <span>{DEMO_MODE ? "Public demo · static saved evidence" : "Local full mode · evidence remains on this machine"}</span>
+        </footer>
       </div>
     </main>
   );

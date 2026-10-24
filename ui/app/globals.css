@@ -3,6 +3,7 @@
 :root {
   --background: #020617;
   --foreground: #e2e8f0;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -12,15 +13,164 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #020617;
-    --foreground: #e2e8f0;
-  }
+* {
+  border-color: rgb(30 41 59 / 0.9);
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 6rem;
 }
 
 body {
-  background: var(--background);
+  min-height: 100%;
+  background:
+    radial-gradient(60rem 35rem at 8% -8%, rgb(14 165 233 / 0.12), transparent 62%),
+    radial-gradient(50rem 30rem at 100% 0%, rgb(129 140 248 / 0.08), transparent 58%),
+    var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+::selection {
+  background: rgb(56 189 248 / 0.28);
+  color: #f8fafc;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(56 189 248 / 0.9);
+  outline-offset: 2px;
+}
+
+/* React Bits Split Text pattern, adapted to a dependency-free CSS implementation. */
+@keyframes argus-word-in {
+  0% {
+    opacity: 0;
+    transform: translateY(0.45em) rotateX(-12deg);
+    filter: blur(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateX(0);
+    filter: blur(0);
+  }
+}
+
+.react-bits-split {
+  perspective: 700px;
+}
+
+.react-bits-word {
+  display: inline-block;
+  transform-origin: 50% 100%;
+  animation: argus-word-in 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity, filter;
+}
+
+/* React Bits Fade Content pattern, implemented with progressive CSS scroll timelines. */
+@keyframes argus-fade-content {
+  from {
+    opacity: 0.15;
+    transform: translateY(14px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .react-bits-fade {
+      animation: argus-fade-content linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 22%;
+    }
+  }
+}
+
+@keyframes argus-soft-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.status-dot {
+  animation: argus-soft-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes argus-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.loading-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(56 189 248 / 0.22), transparent);
+  animation: argus-shimmer 1.25s linear infinite;
+}
+
+@keyframes argus-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.argus-expand {
+  animation: argus-expand 180ms ease-out both;
+}
+
+/* Chrome/Safari keep the native disclosure triangle otherwise; the custom chevron is clearer. */
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary {
+  list-style: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .react-bits-word,
+  .react-bits-fade,
+  .status-dot,
+  .loading-shimmer::after,
+  .argus-expand {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
